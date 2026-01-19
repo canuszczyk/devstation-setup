@@ -1,0 +1,59 @@
+{
+  "name": "Project Name - Python 3.12",
+
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  "containerEnv": {
+    "LANG": "C.UTF-8",
+    "LANGUAGE": "en_US:en",
+    "LC_ALL": "C.UTF-8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1"
+  },
+
+  "initializeCommand": "bash -lc 'set -euo pipefail; mkdir -p .devcontainer; if [ ! -f .devcontainer/.env ]; then printf \"# GitHub CLI token\\nGH_TOKEN=\\n\\n# AI keys (optional)\\nOPENAI_API_KEY=\\nANTHROPIC_API_KEY=\\n\" > .devcontainer/.env; fi; chmod 600 .devcontainer/.env; grep -qxF \".devcontainer/.env\" .gitignore 2>/dev/null || echo \".devcontainer/.env\" >> .gitignore'",
+
+  "runArgs": [
+    "--init",
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env",
+    "--mount", "type=volume,source=${localWorkspaceFolderBasename}-pip-cache,target=/home/vscode/.cache/pip",
+    "--add-host=host.docker.internal:host-gateway",
+    "--tmpfs", "/tmp:exec,nosuid,nodev,size=512m",
+    "--cpus=1.5",
+    "--memory=4g",
+    "--memory-swap=4g"
+  ],
+
+  "postCreateCommand": "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "files.watcherExclude": {
+          "**/.git/**": true,
+          "**/__pycache__/**": true,
+          "**/.venv/**": true,
+          "**/venv/**": true
+        },
+        "git.autofetch": false
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+
+  "remoteUser": "vscode",
+  "features": {},
+
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "App", "onAutoForward": "notify" }
+  }
+}

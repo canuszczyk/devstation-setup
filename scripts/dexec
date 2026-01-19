@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# dexec - Execute into a devcontainer by repo path
+# Usage: dexec [repo_path] [command]
+
+repo_path="${1:-.}"
+cmd="${2:-bash}"
+
+# Resolve to absolute path and find git root
+repo_path="$(cd "$repo_path" 2>/dev/null && pwd)" || { echo "Invalid path: $1"; exit 1; }
+if git -C "$repo_path" rev-parse --show-toplevel >/dev/null 2>&1; then
+  repo_path="$(git -C "$repo_path" rev-parse --show-toplevel)"
+fi
+
+# Calculate label (same logic as devcontainer-rebuild.sh)
+remote=""
+if git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  remote="$(git -C "$repo_path" config --get remote.origin.url || true)"
+fi
+
+basis=""
+if [ -n "$remote" ]; then
+  basis="$remote"
+  basis="${basis#ssh://}"
+  basis="${basis#https://}"
+  basis="${basis#http://}"
+  basis="${basis%.git}"
+  basis="${basis%/}"
+else
+  basis="$(basename "$repo_path")"
+fi
+
+hash="$(printf '%s' "$basis" | sha256sum | cut -c1-16)"
+label="com.devcontainer.repo=repo-${hash}"
+
+# Find container
+cid="$(docker ps -q --filter "label=$label" | head -n1)"
+if [ -z "$cid" ]; then
+  echo "No running container found for: $repo_path"
+  echo "Label: $label"
+  exit 1
+fi
+
+ws_name="$(basename "$repo_path")"
+echo "Attaching to container $cid (${ws_name})..."
+exec docker exec -it -u vscode -w "/workspaces/${ws_name}" "$cid" "$cmd"

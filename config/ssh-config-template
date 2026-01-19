@@ -1,0 +1,33 @@
+# =============================================================================
+# SSH Config Template for Devstation
+# Copy this to ~/.ssh/config on your local machine (Windows/Mac)
+# =============================================================================
+
+# Devstation VM connection
+Host devstation
+    HostName YOUR_VM_IP_OR_HOSTNAME
+    User vscode
+    Port 22
+
+    # Forward SSH agent for git operations (recommended)
+    ForwardAgent yes
+
+    # Keep connection alive
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+
+    # Optional: Use specific key
+    # IdentityFile ~/.ssh/id_ed25519
+
+    # Optional: Speed optimizations
+    Compression yes
+    ControlMaster auto
+    ControlPath ~/.ssh/control-%r@%h:%p
+    ControlPersist 600
+
+# GitHub (for reference)
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_ed25519
+    AddKeysToAgent yes

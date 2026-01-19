@@ -1,0 +1,57 @@
+{
+  "name": "Project Name - Node.js 20",
+
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  "containerEnv": {
+    "LANG": "C.UTF-8",
+    "LANGUAGE": "en_US:en",
+    "LC_ALL": "C.UTF-8"
+  },
+
+  "initializeCommand": "bash -lc 'set -euo pipefail; mkdir -p .devcontainer; if [ ! -f .devcontainer/.env ]; then printf \"# GitHub CLI token\\nGH_TOKEN=\\n\\n# AI keys (optional)\\nOPENAI_API_KEY=\\nANTHROPIC_API_KEY=\\n\" > .devcontainer/.env; fi; chmod 600 .devcontainer/.env; grep -qxF \".devcontainer/.env\" .gitignore 2>/dev/null || echo \".devcontainer/.env\" >> .gitignore'",
+
+  "runArgs": [
+    "--init",
+    "--env-file", "${localWorkspaceFolder}/.devcontainer/.env",
+    "--mount", "type=volume,source=${localWorkspaceFolderBasename}-npm-cache,target=/home/vscode/.npm",
+    "--add-host=host.docker.internal:host-gateway",
+    "--tmpfs", "/tmp:exec,nosuid,nodev,size=512m",
+    "--shm-size", "2g",
+    "--cpus=1.5",
+    "--memory=4g",
+    "--memory-swap=4g"
+  ],
+
+  "postCreateCommand": "npm install",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.watcherExclude": {
+          "**/.git/**": true,
+          "**/node_modules/**": true,
+          "**/dist/**": true,
+          "**/build/**": true
+        },
+        "git.autofetch": false
+      },
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+
+  "remoteUser": "vscode",
+  "features": {},
+
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Dev Server", "onAutoForward": "notify" }
+  }
+}
