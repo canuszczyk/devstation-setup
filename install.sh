@@ -335,7 +335,7 @@ clone_repos() {
 # =============================================================================
 
 install_scripts() {
-  log_info "Installing management scripts to ~/"
+  log_info "Installing management scripts to ~/ (as symlinks)"
 
   local scripts=(
     "devcontainer-rebuild.sh"
@@ -348,9 +348,10 @@ install_scripts() {
 
   for script in "${scripts[@]}"; do
     if [[ -f "$SCRIPT_DIR/scripts/$script" ]]; then
-      cp "$SCRIPT_DIR/scripts/$script" "$HOME/$script"
-      chmod +x "$HOME/$script"
-      log_success "  Installed ~/$script"
+      # Remove existing file/symlink and create new symlink
+      rm -f "$HOME/$script"
+      ln -s "$SCRIPT_DIR/scripts/$script" "$HOME/$script"
+      log_success "  Linked ~/$script -> $SCRIPT_DIR/scripts/$script"
     else
       log_warn "  Script not found: $script"
     fi
