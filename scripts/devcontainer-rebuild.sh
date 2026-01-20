@@ -157,7 +157,35 @@ remove_labeled_containers_and_images() {
   fi
 }
 
+# Verify that required tools are available in the container
+# Returns: "OK" on success, "MISSING: tool1 tool2" on failure
+verify_container() {
+  local cid="$1"
+  local skip_ai="${2:-0}"
+
+  local verify_cmd='
+    # Ensure common install locations are in PATH
+    export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+    MISSING=()
+    for cmd in dotnet node npm; do
+      command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd")
+    done
+    if [[ "'"$skip_ai"'" != "1" ]]; then
+      for cmd in claude gemini codex; do
+        command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd")
+      done
+    fi
+    if (( ${#MISSING[@]} > 0 )); then
+      echo "MISSING: ${MISSING[*]}"
+      exit 1
+    fi
+    echo "OK"
+  '
+  docker exec "$cid" bash -c "$verify_cmd" 2>/dev/null
+}
+
 # Build a single repo - used for both single and multi-repo modes
+# Sets BUILD_VERIFY_RESULT to "OK" or "MISSING: ..." after build
 build_single_repo() {
   local repo_root="$1"
   local force="$2"
@@ -191,6 +219,27 @@ build_single_repo() {
   fi
 
   echo "${prefix}Devcontainer is up."
+
+  # Verify container has required tools
+  local key="${id_label%%=*}"
+  local val="${id_label#*=}"
+  local cid
+  cid="$(docker ps -aq --filter "label=$key=$val" | head -n 1 || true)"
+
+  if [ -n "${cid:-}" ]; then
+    echo "${prefix}Verifying container tools..."
+    BUILD_VERIFY_RESULT="$(verify_container "$cid" "${SKIP_AI_CLIS:-0}")"
+    if [[ "$BUILD_VERIFY_RESULT" == "OK" ]]; then
+      echo "${prefix}Verification: all tools present"
+    else
+      echo "${prefix}Verification FAILED: $BUILD_VERIFY_RESULT"
+      return 1
+    fi
+  else
+    BUILD_VERIFY_RESULT="MISSING: container not found"
+    echo "${prefix}Verification FAILED: could not find container"
+    return 1
+  fi
 }
 
 # Find all repos with devcontainers in a directory
@@ -274,11 +323,15 @@ main() {
         set -o pipefail
         export SKIP_AI_CLIS="$SKIP_AI_CLIS"
         export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
+        export BUILD_VERIFY_RESULT=""
         # Run build and prefix all output with repo name
         if build_single_repo "$repo" "$FORCE" "$PRUNE" "" 2>&1 | sed "s/^/[$name] /"; then
           touch "$result_dir/$name.success"
+          echo "all tools verified" > "$result_dir/$name.verify"
         else
           touch "$result_dir/$name.failed"
+          # Try to capture verification failure reason from build output
+          echo "build or verification failed" > "$result_dir/$name.verify"
         fi
       ) &
       pids+=($!)
@@ -310,12 +363,16 @@ main() {
     for repo in "${repo_paths[@]}"; do
       local name
       name="$(basename "$repo")"
+      local verify_info=""
+      if [[ -f "$log_dir/$name.verify" ]]; then
+        verify_info="$(cat "$log_dir/$name.verify")"
+      fi
       if [[ -f "$log_dir/$name.success" ]]; then
         ((success_count++)) || true
-        echo "✓ $name"
+        echo "✓ $name - $verify_info"
       else
         ((fail_count++)) || true
-        echo "✗ $name (FAILED)"
+        echo "✗ $name - $verify_info"
       fi
     done
 
@@ -367,7 +424,14 @@ main() {
 
     export SKIP_AI_CLIS="$SKIP_AI_CLIS"
     export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
-    build_single_repo "$repo_root" "$FORCE" "$PRUNE"
+    export BUILD_VERIFY_RESULT=""
+
+    if ! build_single_repo "$repo_root" "$FORCE" "$PRUNE"; then
+      echo ""
+      echo "=== Build Summary ==="
+      echo "✗ $(basename "$repo_root") - build or verification failed"
+      exit 1
+    fi
 
     # Print attach instructions
     local id_label
@@ -376,6 +440,12 @@ main() {
     local val="${id_label#*=}"
     local cid
     cid="$(docker ps -aq --filter "label=$key=$val" | head -n 1 || true)"
+
+    echo ""
+    echo "=== Build Summary ==="
+    echo "✓ $(basename "$repo_root") - all tools verified"
+    echo ""
+
     if [ -n "${cid:-}" ]; then
       echo "Container: $cid"
       echo "Attach:"

@@ -9,6 +9,12 @@ if [[ "${1:-}" == "--quick" ]]; then
   QUICK_MODE=1
 fi
 
+# Track failed steps for final exit code determination
+declare -a FAILED_STEPS=()
+
+log_err() { printf "\033[1;31m[err]\033[0m %s\n" "$*"; }
+log_info() { printf "\033[0;36m[info]\033[0m %s\n" "$*"; }
+
 echo "=== Post-Create Command (quick=$QUICK_MODE) ==="
 
 # --- PostgreSQL Setup ---
@@ -58,6 +64,104 @@ install_npm() {
   fi
 }
 
+# --- AI CLIs ---
+install_ai_clis() {
+  echo "Installing AI CLIs..."
+
+  if [[ "${SKIP_AI_CLIS:-0}" == "1" ]]; then
+    log_info "Skipping AI CLI installation (SKIP_AI_CLIS=1)"
+    return 0
+  fi
+
+  npm_prefix="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
+  bin_dir="$npm_prefix/bin"
+  mkdir -p "$npm_prefix" "$bin_dir" 2>/dev/null || true
+  npm config set prefix "$npm_prefix" >/dev/null 2>&1 || true
+
+  # Ensure npm global bin and ~/.local/bin are in PATH for this session
+  if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+    export PATH="$bin_dir:$PATH"
+  fi
+  if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+
+  # Persist PATH additions to .bashrc for interactive shells
+  BASHRC="$HOME/.bashrc"
+  if [[ -f "$BASHRC" ]]; then
+    if ! grep -q '\.local/bin' "$BASHRC" 2>/dev/null; then
+      log_info "Adding ~/.local/bin to .bashrc"
+      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASHRC"
+    fi
+    if ! grep -q '\.npm-global/bin' "$BASHRC" 2>/dev/null; then
+      log_info "Adding ~/.npm-global/bin to .bashrc"
+      echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$BASHRC"
+    fi
+  fi
+
+  log_info "PATH for AI CLI installs: $PATH"
+
+  # Claude: use official installer (installs to ~/.local/bin)
+  if ! command -v claude >/dev/null 2>&1; then
+    log_info "Installing Claude CLI…"
+    if timeout 120 bash -c 'curl -fsSL https://claude.ai/install.sh | bash'; then
+      log_info "Claude CLI installed: $(command -v claude || echo 'not in PATH yet')"
+    else
+      log_err "FAILED: Claude CLI installation"
+      FAILED_STEPS+=("claude-cli")
+    fi
+  else
+    log_info "Claude CLI already installed."
+  fi
+
+  # Gemini CLI via npm (timeout 600s - large package with 500+ deps, slow on constrained CPUs)
+  log_info "Installing Gemini CLI (this may take several minutes)…"
+  if ! timeout 600 npm install -g @google/gemini-cli 2>&1; then
+    log_err "FAILED: Gemini CLI installation (npm install failed)"
+    FAILED_STEPS+=("gemini-cli")
+  elif ! command -v gemini >/dev/null 2>&1; then
+    log_err "FAILED: Gemini CLI installation (binary not found after install)"
+    log_err "  npm prefix: $(npm config get prefix)"
+    log_err "  PATH: $PATH"
+    FAILED_STEPS+=("gemini-cli")
+  else
+    log_info "Gemini CLI installed: $(command -v gemini)"
+  fi
+
+  # Codexaw (forked) - install first, then rename binary (timeout 120s)
+  log_info "Installing Codexaw CLI…"
+  if timeout 120 npm install -g https://github.com/canuszczyk/codex/releases/latest/download/codexaw.tgz; then
+    if [ -x "$bin_dir/codex" ]; then
+      mv "$bin_dir/codex" "$bin_dir/codexaw" >/dev/null 2>&1 || true
+    fi
+  else
+    log_err "FAILED: Codexaw CLI installation"
+    FAILED_STEPS+=("codexaw-cli")
+  fi
+
+  # Official Codex (upstream) (timeout 120s)
+  log_info "Installing Codex CLI…"
+  if ! timeout 120 npm install -g @openai/codex; then
+    log_err "FAILED: Codex CLI installation"
+    FAILED_STEPS+=("codex-cli")
+  fi
+
+  # Verify AI CLI binaries are available
+  log_info "Verifying AI CLI installations…"
+  if ! command -v claude >/dev/null 2>&1; then
+    log_err "VERIFICATION FAILED: claude not found in PATH"
+    FAILED_STEPS+=("claude-verify")
+  fi
+  if ! command -v gemini >/dev/null 2>&1; then
+    log_err "VERIFICATION FAILED: gemini not found in PATH"
+    FAILED_STEPS+=("gemini-verify")
+  fi
+  if ! command -v codex >/dev/null 2>&1; then
+    log_err "VERIFICATION FAILED: codex not found in PATH"
+    FAILED_STEPS+=("codex-verify")
+  fi
+}
+
 # --- Main ---
 main() {
   setup_postgres
@@ -65,6 +169,16 @@ main() {
   if [[ "$QUICK_MODE" == "0" ]]; then
     restore_dotnet
     install_npm
+    install_ai_clis
+  fi
+
+  # Check for AI CLI failures and exit with error if any failed (unless skipped or quick mode)
+  if [[ "$QUICK_MODE" != "1" ]] && [[ "${SKIP_AI_CLIS:-0}" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
+    log_err "=========================================="
+    log_err "POST-CREATE FAILED: AI CLI installation errors"
+    log_err "Failed steps: ${FAILED_STEPS[*]}"
+    log_err "=========================================="
+    exit 1
   fi
 
   echo "=== Post-Create Complete ==="
