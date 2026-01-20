@@ -102,14 +102,22 @@ install_ai_clis() {
   log_info "PATH for AI CLI installs: $PATH"
 
   # Claude: use official installer (installs to ~/.local/bin)
+  # Note: Download script first, then run - timeout doesn't work with piped commands
   if ! command -v claude >/dev/null 2>&1; then
     log_info "Installing Claude CLI…"
-    if timeout 120 bash -c 'curl -fsSL https://claude.ai/install.sh | bash'; then
-      log_info "Claude CLI installed: $(command -v claude || echo 'not in PATH yet')"
+    CLAUDE_SCRIPT=$(mktemp)
+    if timeout 30 curl -fsSL https://claude.ai/install.sh -o "$CLAUDE_SCRIPT" 2>/dev/null; then
+      if timeout 120 bash "$CLAUDE_SCRIPT"; then
+        log_info "Claude CLI installed: $(command -v claude || echo 'not in PATH yet')"
+      else
+        log_err "FAILED: Claude CLI installation (installer failed or timed out)"
+        FAILED_STEPS+=("claude-cli")
+      fi
     else
-      log_err "FAILED: Claude CLI installation"
+      log_err "FAILED: Claude CLI installation (could not download installer)"
       FAILED_STEPS+=("claude-cli")
     fi
+    rm -f "$CLAUDE_SCRIPT"
   else
     log_info "Claude CLI already installed."
   fi
