@@ -76,6 +76,9 @@ RUN ARCH=$(uname -m) && \
 RUN curl -sL "https://dystroy.org/broot/download/x86_64-linux/broot" -o /usr/local/bin/broot && \
     chmod +x /usr/local/bin/broot
 
+# Symlink vi to nano (for tools like gitui that expect vi)
+RUN ln -sf /usr/bin/nano /usr/local/bin/vi
+
 USER $USERNAME
 WORKDIR /app
 
