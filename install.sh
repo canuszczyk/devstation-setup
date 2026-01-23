@@ -25,10 +25,10 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_info() { echo -e "${BLUE}[INFO]${NC} $1" >&2; }
+log_success() { echo -e "${GREEN}[OK]${NC} $1" >&2; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # =============================================================================
 # Prerequisite Checks
@@ -118,7 +118,7 @@ discover_github_repos_with_devcontainer() {
 
   while IFS= read -r repo; do
     ((count++)) || true
-    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo"
+    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo" >&2
 
     # Try to list .devcontainer directory
     if gh api "repos/$gh_target/$repo/contents/.devcontainer" &>/dev/null; then
@@ -126,7 +126,7 @@ discover_github_repos_with_devcontainer() {
     fi
   done <<< "$all_repos"
 
-  echo ""  # Clear the progress line
+  echo "" >&2  # Clear the progress line
 
   if [[ ${#repos[@]} -eq 0 ]]; then
     log_warn "No repos with .devcontainer/ found"
@@ -243,7 +243,7 @@ discover_bitbucket_repos_with_devcontainer() {
 
   for repo in "${all_repos[@]}"; do
     ((count++)) || true
-    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo"
+    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo" >&2
 
     # Try to get .devcontainer directory contents
     local dc_check
@@ -255,7 +255,7 @@ discover_bitbucket_repos_with_devcontainer() {
     fi
   done
 
-  echo ""  # Clear the progress line
+  echo "" >&2  # Clear the progress line
 
   if [[ ${#repos[@]} -eq 0 ]]; then
     log_warn "No repos with .devcontainer/ found"
