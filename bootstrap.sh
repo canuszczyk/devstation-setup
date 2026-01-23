@@ -157,6 +157,41 @@ install_devcontainer_cli() {
   log_success "@devcontainers/cli installed: $(devcontainer --version)"
 }
 
+install_claude_code() {
+  if command -v claude &>/dev/null; then
+    log_info "Claude Code already installed: $(claude --version 2>/dev/null | head -1)"
+    return 0
+  fi
+
+  log_info "Installing Claude Code CLI..."
+  sudo npm install -g @anthropic-ai/claude-code
+
+  log_success "Claude Code CLI installed"
+}
+
+install_gitui() {
+  if command -v gitui &>/dev/null; then
+    log_info "gitui already installed: $(gitui --version)"
+    return 0
+  fi
+
+  log_info "Installing gitui..."
+
+  local gitui_version="0.26.3"
+  local tmp_dir
+  tmp_dir=$(mktemp -d)
+
+  curl -sSL "https://github.com/extrawurst/gitui/releases/download/v${gitui_version}/gitui-linux-x86_64.tar.gz" \
+    -o "$tmp_dir/gitui.tar.gz"
+  tar -xzf "$tmp_dir/gitui.tar.gz" -C "$tmp_dir"
+  sudo mv "$tmp_dir/gitui" /usr/local/bin/gitui
+  sudo chmod +x /usr/local/bin/gitui
+
+  rm -rf "$tmp_dir"
+
+  log_success "gitui installed: $(gitui --version)"
+}
+
 # =============================================================================
 # Clone Devstation Setup Repository
 # =============================================================================
@@ -245,6 +280,8 @@ main() {
   echo "  - Node.js 20 LTS"
   echo "  - GitHub CLI (gh)"
   echo "  - @devcontainers/cli"
+  echo "  - Claude Code CLI"
+  echo "  - gitui (terminal UI for git)"
   echo ""
 
   # Step 1: Validate OS
@@ -258,6 +295,8 @@ main() {
   install_nodejs
   install_gh_cli
   install_devcontainer_cli
+  install_claude_code
+  install_gitui
 
   # Step 3: Clone devstation-setup repo
   echo ""
