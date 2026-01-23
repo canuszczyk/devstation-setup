@@ -139,6 +139,23 @@ devstation-setup/
 │   ├── node/
 │   └── python/
 └── wiki/                        # GitHub wiki source files
+    ├── Home.md                  # Wiki landing page
+    ├── Quick-Start.md           # Step-by-step setup guide
+    ├── Bootstrap-Script.md      # Phase 1 script details
+    ├── Install-Script.md        # Phase 2 script details
+    ├── Bitbucket-Setup.md       # App password creation guide
+    ├── Troubleshooting.md       # Common issues and solutions
+    └── _Sidebar.md              # Wiki navigation sidebar
+```
+
+### Wiki Files
+
+The `wiki/` directory contains source files for the [GitHub Wiki](../../wiki). To publish:
+
+```bash
+git clone https://github.com/canuszczyk/devstation-setup.wiki.git /tmp/wiki
+cp ~/devstation-setup/wiki/*.md /tmp/wiki/
+cd /tmp/wiki && git add . && git commit -m "Update docs" && git push
 ```
 
 ## Documentation
