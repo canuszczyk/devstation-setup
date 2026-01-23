@@ -200,34 +200,52 @@ prompt_bitbucket_auth() {
     return 0
   fi
 
-  echo ""
-  echo "Bitbucket authentication requires:"
-  echo "  - Your Bitbucket username"
-  echo "  - An API token (create at: https://bitbucket.org/account/settings/api-tokens/)"
-  echo "  - Your workspace name"
-  echo ""
-  echo "API token scopes needed: Repositories (Read)"
-  echo ""
-  echo "NOTE: App passwords deprecated Sep 2025, disabled Jun 2026. Use API tokens."
-  echo ""
-
-  read -rp "Bitbucket username: " BB_USERNAME
-  if [[ -z "$BB_USERNAME" ]]; then
-    log_warn "No username provided, skipping Bitbucket setup"
-    return 1
+  # Only prompt for missing fields
+  local need_prompt=0
+  if [[ -z "$BB_USERNAME" || -z "$BB_APP_PASSWORD" || -z "$BB_WORKSPACE" ]]; then
+    need_prompt=1
   fi
 
-  read -rsp "API token: " BB_APP_PASSWORD
-  echo ""
-  if [[ -z "$BB_APP_PASSWORD" ]]; then
-    log_warn "No API token provided, skipping Bitbucket setup"
-    return 1
-  fi
+  if [[ "$need_prompt" == "1" ]]; then
+    echo ""
+    if [[ -n "$BB_APP_PASSWORD" ]]; then
+      echo "Found existing API token. Need additional info:"
+    else
+      echo "Bitbucket authentication requires:"
+      echo "  - Your Bitbucket username"
+      echo "  - An API token (create at: https://bitbucket.org/account/settings/api-tokens/)"
+      echo "  - Your workspace name"
+      echo ""
+      echo "API token scopes needed: Repositories (Read)"
+      echo ""
+      echo "NOTE: App passwords deprecated Sep 2025, disabled Jun 2026. Use API tokens."
+    fi
+    echo ""
 
-  read -rp "Workspace name: " BB_WORKSPACE
-  if [[ -z "$BB_WORKSPACE" ]]; then
-    log_warn "No workspace provided, skipping Bitbucket setup"
-    return 1
+    if [[ -z "$BB_USERNAME" ]]; then
+      read -rp "Bitbucket username: " BB_USERNAME
+      if [[ -z "$BB_USERNAME" ]]; then
+        log_warn "No username provided, skipping Bitbucket setup"
+        return 1
+      fi
+    fi
+
+    if [[ -z "$BB_APP_PASSWORD" ]]; then
+      read -rsp "API token: " BB_APP_PASSWORD
+      echo ""
+      if [[ -z "$BB_APP_PASSWORD" ]]; then
+        log_warn "No API token provided, skipping Bitbucket setup"
+        return 1
+      fi
+    fi
+
+    if [[ -z "$BB_WORKSPACE" ]]; then
+      read -rp "Workspace name: " BB_WORKSPACE
+      if [[ -z "$BB_WORKSPACE" ]]; then
+        log_warn "No workspace provided, skipping Bitbucket setup"
+        return 1
+      fi
+    fi
   fi
 
   # Test authentication
