@@ -2,11 +2,16 @@
 set -euo pipefail
 
 # =============================================================================
-# Devstation Setup - Interactive Installer
+# Devstation Setup - Interactive Repo Configuration
 # =============================================================================
-# This script sets up a fresh Linux VM as a devcontainer development station.
-# It installs Docker, Node.js, devcontainer CLI, clones repos, and configures
-# management scripts and shell customizations.
+# This script configures and clones repos from GitHub and Bitbucket.
+# Run after bootstrap.sh has installed core dependencies.
+#
+# Prerequisites (installed by bootstrap.sh):
+#   - Docker CE
+#   - Node.js 20+
+#   - GitHub CLI (gh)
+#   - @devcontainers/cli
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +22,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -25,139 +31,42 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # =============================================================================
-# OS Detection and Validation
+# Prerequisite Checks
 # =============================================================================
 
-detect_os() {
-  if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    OS_ID="${ID:-unknown}"
-    OS_VERSION="${VERSION_ID:-unknown}"
-    OS_NAME="${PRETTY_NAME:-$ID $VERSION_ID}"
-  else
-    log_error "Cannot detect OS (no /etc/os-release)"
+check_prerequisites() {
+  local missing=()
+
+  if ! command -v docker &>/dev/null; then
+    missing+=("docker")
+  fi
+
+  if ! command -v gh &>/dev/null; then
+    missing+=("gh (GitHub CLI)")
+  fi
+
+  if ! command -v node &>/dev/null; then
+    missing+=("node")
+  fi
+
+  if ! command -v devcontainer &>/dev/null; then
+    missing+=("devcontainer CLI")
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    log_error "Missing prerequisites: ${missing[*]}"
+    echo ""
+    echo "Please run the bootstrap script first:"
+    echo "  curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash"
+    echo ""
     exit 1
   fi
-}
 
-validate_os() {
-  detect_os
-  log_info "Detected OS: $OS_NAME"
-
-  case "$OS_ID" in
-    ubuntu|debian)
-      log_success "Supported OS detected"
-      ;;
-    *)
-      log_error "Unsupported OS: $OS_ID"
-      log_error "This installer requires Ubuntu or Debian."
-      exit 1
-      ;;
-  esac
+  log_success "All prerequisites installed"
 }
 
 # =============================================================================
-# Package Installation
-# =============================================================================
-
-install_base_packages() {
-  log_info "Installing base packages..."
-
-  sudo apt-get update
-  sudo apt-get install -y \
-    curl wget ca-certificates gnupg lsb-release \
-    git git-lfs \
-    build-essential gcc g++ make \
-    jq unzip
-
-  git lfs install --system 2>/dev/null || true
-  log_success "Base packages installed"
-}
-
-install_docker() {
-  if command -v docker &>/dev/null; then
-    log_info "Docker already installed: $(docker --version)"
-    return 0
-  fi
-
-  log_info "Installing Docker CE..."
-
-  # Add Docker's official GPG key
-  sudo install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/${OS_ID}/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-  # Add the repository
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${OS_ID} \
-    $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-  sudo apt-get update
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-  # Add current user to docker group
-  sudo usermod -aG docker "$USER"
-  log_warn "Added $USER to docker group. You may need to log out and back in for this to take effect."
-
-  log_success "Docker installed: $(docker --version)"
-}
-
-install_nodejs() {
-  if command -v node &>/dev/null; then
-    local node_ver
-    node_ver=$(node --version)
-    local major_ver="${node_ver%%.*}"
-    major_ver="${major_ver#v}"
-
-    if [[ "$major_ver" -ge 18 ]]; then
-      log_info "Node.js already installed: $node_ver"
-      return 0
-    fi
-  fi
-
-  log_info "Installing Node.js 20 LTS..."
-
-  # NodeSource setup
-  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-  sudo apt-get install -y nodejs
-
-  log_success "Node.js installed: $(node --version)"
-}
-
-install_gh_cli() {
-  if command -v gh &>/dev/null; then
-    log_info "GitHub CLI already installed: $(gh --version | head -1)"
-    return 0
-  fi
-
-  log_info "Installing GitHub CLI..."
-
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
-    sudo tee /usr/share/keyrings/githubcli-archive-keyring.gpg > /dev/null
-  sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | \
-    sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-
-  sudo apt-get update
-  sudo apt-get install -y gh
-
-  log_success "GitHub CLI installed: $(gh --version | head -1)"
-}
-
-install_devcontainer_cli() {
-  if command -v devcontainer &>/dev/null; then
-    log_info "@devcontainers/cli already installed: $(devcontainer --version)"
-    return 0
-  fi
-
-  log_info "Installing @devcontainers/cli..."
-  sudo npm install -g @devcontainers/cli
-
-  log_success "@devcontainers/cli installed: $(devcontainer --version)"
-}
-
-# =============================================================================
-# GitHub Authentication
+# GitHub Provider
 # =============================================================================
 
 check_gh_auth() {
@@ -165,27 +74,30 @@ check_gh_auth() {
     log_success "GitHub CLI is authenticated"
     return 0
   fi
+  return 1
+}
 
+prompt_gh_auth() {
   log_warn "GitHub CLI is not authenticated"
   echo ""
   echo "Please run: gh auth login"
   echo "Choose: GitHub.com > HTTPS > Authenticate with a web browser"
   echo ""
-  read -rp "Press Enter after you've authenticated, or Ctrl+C to skip repo selection..."
+  read -rp "Press Enter after you've authenticated, or type 'skip' to skip GitHub setup: " response
+
+  if [[ "$response" == "skip" ]]; then
+    return 1
+  fi
 
   if ! gh auth status &>/dev/null; then
-    log_error "Still not authenticated. Skipping repo selection."
+    log_error "Still not authenticated. Skipping GitHub setup."
     return 1
   fi
   return 0
 }
 
-# =============================================================================
-# Repository Discovery and Selection
-# =============================================================================
-
-discover_repos_with_devcontainer() {
-  local gh_target="$1"  # username or org
+discover_github_repos_with_devcontainer() {
+  local gh_target="$1"
   local repos=()
 
   log_info "Searching for repos with .devcontainer/ in $gh_target..."
@@ -220,14 +132,170 @@ discover_repos_with_devcontainer() {
     log_warn "No repos with .devcontainer/ found"
   else
     log_success "Found ${#repos[@]} repos with devcontainer configs"
-    echo ""
-    printf '%s\n' "${repos[@]}"
+  fi
+
+  printf '%s\n' "${repos[@]}"
+}
+
+clone_github_repos() {
+  local gh_target="$1"
+  shift
+  local repos=("$@")
+
+  if [[ ${#repos[@]} -eq 0 ]]; then
+    return
+  fi
+
+  for repo in "${repos[@]}"; do
+    local repo_path="$CODE_DIR/$repo"
+    if [[ -d "$repo_path" ]]; then
+      log_info "  $repo - already exists, skipping"
+    else
+      log_info "  Cloning $repo..."
+      gh repo clone "$gh_target/$repo" "$repo_path" -- --depth=1
+    fi
+  done
+}
+
+# =============================================================================
+# Bitbucket Provider
+# =============================================================================
+
+# Bitbucket credentials (set during authentication)
+BB_USERNAME=""
+BB_APP_PASSWORD=""
+BB_WORKSPACE=""
+
+prompt_bitbucket_auth() {
+  echo ""
+  echo "Bitbucket authentication requires:"
+  echo "  - Your Bitbucket username"
+  echo "  - An app password (create at: https://bitbucket.org/account/settings/app-passwords)"
+  echo "  - Your workspace name"
+  echo ""
+  echo "App password permissions needed: Repositories (Read)"
+  echo ""
+
+  read -rp "Bitbucket username: " BB_USERNAME
+  if [[ -z "$BB_USERNAME" ]]; then
+    log_warn "No username provided, skipping Bitbucket setup"
+    return 1
+  fi
+
+  read -rsp "App password: " BB_APP_PASSWORD
+  echo ""
+  if [[ -z "$BB_APP_PASSWORD" ]]; then
+    log_warn "No app password provided, skipping Bitbucket setup"
+    return 1
+  fi
+
+  read -rp "Workspace name: " BB_WORKSPACE
+  if [[ -z "$BB_WORKSPACE" ]]; then
+    log_warn "No workspace provided, skipping Bitbucket setup"
+    return 1
+  fi
+
+  # Test authentication
+  log_info "Testing Bitbucket authentication..."
+  local response
+  response=$(curl -s -u "$BB_USERNAME:$BB_APP_PASSWORD" \
+    "https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE?pagelen=1" 2>/dev/null)
+
+  if echo "$response" | jq -e '.values' &>/dev/null; then
+    log_success "Bitbucket authentication successful"
+    return 0
+  else
+    log_error "Bitbucket authentication failed. Please check your credentials."
+    return 1
   fi
 }
 
+discover_bitbucket_repos_with_devcontainer() {
+  local repos=()
+
+  log_info "Searching for repos with .devcontainer/ in $BB_WORKSPACE..."
+
+  # Paginate through all repos
+  local page_url="https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE?pagelen=100"
+  local all_repos=()
+
+  while [[ -n "$page_url" ]]; do
+    local response
+    response=$(curl -s -u "$BB_USERNAME:$BB_APP_PASSWORD" "$page_url")
+
+    # Extract repo slugs
+    local page_repos
+    mapfile -t page_repos < <(echo "$response" | jq -r '.values[]? | select(.is_private != null) | .slug' 2>/dev/null || true)
+    all_repos+=("${page_repos[@]}")
+
+    # Get next page URL (null if no more pages)
+    page_url=$(echo "$response" | jq -r '.next // empty' 2>/dev/null || true)
+  done
+
+  if [[ ${#all_repos[@]} -eq 0 ]]; then
+    log_warn "No repos found in workspace $BB_WORKSPACE"
+    return
+  fi
+
+  # Check each repo for .devcontainer folder
+  local count=0
+  local total=${#all_repos[@]}
+
+  for repo in "${all_repos[@]}"; do
+    ((count++)) || true
+    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo"
+
+    # Try to get .devcontainer directory contents
+    local dc_check
+    dc_check=$(curl -s -u "$BB_USERNAME:$BB_APP_PASSWORD" \
+      "https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE/$repo/src/HEAD/.devcontainer/" 2>/dev/null)
+
+    if echo "$dc_check" | jq -e '.values' &>/dev/null; then
+      repos+=("$repo")
+    fi
+  done
+
+  echo ""  # Clear the progress line
+
+  if [[ ${#repos[@]} -eq 0 ]]; then
+    log_warn "No repos with .devcontainer/ found"
+  else
+    log_success "Found ${#repos[@]} repos with devcontainer configs"
+  fi
+
+  printf '%s\n' "${repos[@]}"
+}
+
+clone_bitbucket_repos() {
+  shift  # Skip workspace param (using global BB_WORKSPACE)
+  local repos=("$@")
+
+  if [[ ${#repos[@]} -eq 0 ]]; then
+    return
+  fi
+
+  for repo in "${repos[@]}"; do
+    local repo_path="$CODE_DIR/$repo"
+    if [[ -d "$repo_path" ]]; then
+      log_info "  $repo - already exists, skipping"
+    else
+      log_info "  Cloning $repo..."
+      # Clone with embedded credentials (will be saved by git credential store)
+      git clone --depth=1 \
+        "https://${BB_USERNAME}:${BB_APP_PASSWORD}@bitbucket.org/${BB_WORKSPACE}/${repo}.git" \
+        "$repo_path"
+    fi
+  done
+}
+
+# =============================================================================
+# Interactive Selection UI
+# =============================================================================
+
 select_repos() {
-  local gh_target="$1"
-  shift
+  local provider="$1"
+  local target="$2"
+  shift 2
   local repos=("$@")
   local selected=()
 
@@ -235,23 +303,18 @@ select_repos() {
     return
   fi
 
-  echo ""
-  echo "Select repos to clone (space to toggle, Enter to confirm):"
-  echo ""
-
   local checked=()
   for ((i=0; i<${#repos[@]}; i++)); do
     checked[$i]=0
   done
 
-  local current=0
   local done=0
 
   # Simple selection interface
   while [[ $done -eq 0 ]]; do
     # Clear and redraw
     echo -e "\033[2J\033[H"  # Clear screen
-    echo "Select repos to clone from $gh_target:"
+    echo "Select repos to clone from $provider ($target):"
     echo "(Use number to toggle, 'a' for all, 'n' for none, Enter to confirm)"
     echo ""
 
@@ -303,81 +366,9 @@ select_repos() {
   printf '%s\n' "${selected[@]}"
 }
 
-clone_repos() {
-  local gh_target="$1"
-  shift
-  local repos=("$@")
-
-  if [[ ${#repos[@]} -eq 0 ]]; then
-    log_info "No repos selected for cloning"
-    return
-  fi
-
-  mkdir -p "$CODE_DIR"
-
-  log_info "Cloning ${#repos[@]} repos to $CODE_DIR..."
-
-  for repo in "${repos[@]}"; do
-    local repo_path="$CODE_DIR/$repo"
-    if [[ -d "$repo_path" ]]; then
-      log_info "  $repo - already exists, skipping"
-    else
-      log_info "  Cloning $repo..."
-      gh repo clone "$gh_target/$repo" "$repo_path" -- --depth=1
-    fi
-  done
-
-  log_success "Repos cloned to $CODE_DIR"
-}
-
 # =============================================================================
 # Script and Config Installation
 # =============================================================================
-
-install_scripts() {
-  log_info "Installing management scripts to ~/ (as symlinks)"
-
-  local scripts=(
-    "devcontainer-rebuild.sh"
-    "devcontainer-open.sh"
-    "devcontainer-stop-all.sh"
-    "devcontainer-cleanup.sh"
-    "devcontainer-start-all.sh"
-    "dexec"
-  )
-
-  for script in "${scripts[@]}"; do
-    if [[ -f "$SCRIPT_DIR/scripts/$script" ]]; then
-      # Remove existing file/symlink and create new symlink
-      rm -f "$HOME/$script"
-      ln -s "$SCRIPT_DIR/scripts/$script" "$HOME/$script"
-      log_success "  Linked ~/$script -> $SCRIPT_DIR/scripts/$script"
-    else
-      log_warn "  Script not found: $script"
-    fi
-  done
-}
-
-install_bashrc_additions() {
-  local bashrc="$HOME/.bashrc"
-  local marker="# === DEVSTATION CUSTOMIZATIONS ==="
-
-  if grep -q "$marker" "$bashrc" 2>/dev/null; then
-    log_info "Bashrc customizations already present"
-    return
-  fi
-
-  log_info "Adding customizations to ~/.bashrc..."
-
-  {
-    echo ""
-    echo "$marker"
-    cat "$SCRIPT_DIR/config/bashrc-additions"
-    echo "$marker END"
-  } >> "$bashrc"
-
-  log_success "Bashrc customizations added"
-}
 
 generate_repo_aliases() {
   local bashrc="$HOME/.bashrc"
@@ -449,54 +440,88 @@ prompt_initial_build() {
 main() {
   echo ""
   echo "=============================================="
-  echo "  Devstation Setup - Interactive Installer"
+  echo "  Devstation Setup - Repo Configuration"
   echo "=============================================="
   echo ""
 
-  # Step 1: Validate OS
-  validate_os
+  # Step 1: Check prerequisites
+  check_prerequisites
+  mkdir -p "$CODE_DIR"
 
-  # Step 2: Install packages
-  echo ""
-  echo "--- Installing Dependencies ---"
-  install_base_packages
-  install_docker
-  install_nodejs
-  install_gh_cli
-  install_devcontainer_cli
+  # Track if any repos were cloned
+  local repos_cloned=0
 
-  # Step 3: GitHub auth and repo selection
+  # ===================
+  # GitHub Setup
+  # ===================
   echo ""
   echo "--- GitHub Repository Setup ---"
+  read -rp "Configure GitHub repos? (y/N): " configure_github
 
-  if check_gh_auth; then
-    read -rp "Enter GitHub username or organization: " gh_target
+  if [[ "$configure_github" =~ ^[Yy]$ ]]; then
+    if check_gh_auth || prompt_gh_auth; then
+      read -rp "Enter GitHub username or organization: " gh_target
 
-    if [[ -n "$gh_target" ]]; then
+      if [[ -n "$gh_target" ]]; then
+        # Discover repos
+        mapfile -t discovered_repos < <(discover_github_repos_with_devcontainer "$gh_target")
+
+        if [[ ${#discovered_repos[@]} -gt 0 ]]; then
+          # Select repos
+          mapfile -t selected_repos < <(select_repos "GitHub" "$gh_target" "${discovered_repos[@]}")
+
+          if [[ ${#selected_repos[@]} -gt 0 ]]; then
+            log_info "Cloning ${#selected_repos[@]} repos to $CODE_DIR..."
+            clone_github_repos "$gh_target" "${selected_repos[@]}"
+            repos_cloned=1
+            log_success "GitHub repos cloned"
+          fi
+        fi
+      fi
+    fi
+  fi
+
+  # ===================
+  # Bitbucket Setup
+  # ===================
+  echo ""
+  echo "--- Bitbucket Repository Setup ---"
+  read -rp "Configure Bitbucket repos? (y/N): " configure_bitbucket
+
+  if [[ "$configure_bitbucket" =~ ^[Yy]$ ]]; then
+    if prompt_bitbucket_auth; then
       # Discover repos
-      mapfile -t discovered_repos < <(discover_repos_with_devcontainer "$gh_target")
+      mapfile -t discovered_repos < <(discover_bitbucket_repos_with_devcontainer)
 
       if [[ ${#discovered_repos[@]} -gt 0 ]]; then
         # Select repos
-        mapfile -t selected_repos < <(select_repos "$gh_target" "${discovered_repos[@]}")
+        mapfile -t selected_repos < <(select_repos "Bitbucket" "$BB_WORKSPACE" "${discovered_repos[@]}")
 
-        # Clone selected repos
-        clone_repos "$gh_target" "${selected_repos[@]}"
+        if [[ ${#selected_repos[@]} -gt 0 ]]; then
+          log_info "Cloning ${#selected_repos[@]} repos to $CODE_DIR..."
+          clone_bitbucket_repos "$BB_WORKSPACE" "${selected_repos[@]}"
+          repos_cloned=1
+          log_success "Bitbucket repos cloned"
+        fi
       fi
     fi
-  else
-    log_warn "Skipping repo discovery (not authenticated)"
   fi
 
-  # Step 4: Install scripts and configs
-  echo ""
-  echo "--- Installing Scripts and Configuration ---"
-  install_scripts
-  install_bashrc_additions
-  generate_repo_aliases
+  # ===================
+  # Generate Aliases
+  # ===================
+  if [[ $repos_cloned -eq 1 ]]; then
+    echo ""
+    echo "--- Generating Aliases ---"
+    generate_repo_aliases
+  fi
 
-  # Step 5: Optional build
-  prompt_initial_build
+  # ===================
+  # Optional Build
+  # ===================
+  if [[ $repos_cloned -eq 1 ]]; then
+    prompt_initial_build
+  fi
 
   # Done
   echo ""
@@ -505,10 +530,9 @@ main() {
   echo "=============================================="
   echo ""
   echo "Next steps:"
-  echo "  1. Log out and back in (for docker group)"
-  echo "  2. Run: source ~/.bashrc"
-  echo "  3. Build containers: ~/devcontainer-rebuild.sh ~/code"
-  echo "  4. Shell into a container: ~/dexec ~/code/MyRepo"
+  echo "  1. Run: source ~/.bashrc"
+  echo "  2. Build containers: ~/devcontainer-rebuild.sh ~/code"
+  echo "  3. Shell into a container: ~/dexec ~/code/MyRepo"
   echo ""
   echo "See ~/devstation-setup/docs/ for more documentation."
   echo ""
