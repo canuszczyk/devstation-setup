@@ -32,7 +32,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # URL-encode a string (for embedding credentials in URLs)
 urlencode() {
-  jq -sRr @uri <<< "$1"
+  printf '%s' "$1" | jq -sRr @uri
 }
 
 # =============================================================================
