@@ -195,8 +195,8 @@ prompt_bitbucket_auth() {
 discover_bitbucket_repos() {
   log_info "Fetching repos from $BB_WORKSPACE..."
 
-  # Paginate through all repos
-  local page_url="https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE?pagelen=100"
+  # Paginate through all repos, sorted by most recent activity
+  local page_url="https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE?pagelen=100&sort=-updated_on"
   local all_repos=()
 
   while [[ -n "$page_url" ]]; do
