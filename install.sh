@@ -235,18 +235,22 @@ clone_bitbucket_repos() {
     return
   fi
 
-  # Create a temporary askpass script for git authentication
-  # This avoids all URL-encoding issues with special characters
-  local askpass_script
-  askpass_script=$(mktemp)
-  chmod +x "$askpass_script"
-  cat > "$askpass_script" << ASKPASS_EOF
+  # Store credentials in temp files to avoid shell interpretation issues
+  local tmp_dir askpass_script
+  tmp_dir=$(mktemp -d)
+  printf '%s' "$BB_USERNAME" > "$tmp_dir/user"
+  printf '%s' "$BB_APP_PASSWORD" > "$tmp_dir/pass"
+
+  askpass_script="$tmp_dir/askpass"
+  cat > "$askpass_script" << 'ASKPASS_EOF'
 #!/bin/bash
-case "\$1" in
-  *Username*|*username*) echo "$BB_USERNAME" ;;
-  *Password*|*password*) echo "$BB_APP_PASSWORD" ;;
+dir="$(dirname "$0")"
+case "$1" in
+  *Username*|*username*) cat "$dir/user" ;;
+  *Password*|*password*) cat "$dir/pass" ;;
 esac
 ASKPASS_EOF
+  chmod +x "$askpass_script"
 
   # Also store in git-credentials for future use (URL-encoded)
   local encoded_user encoded_token
@@ -260,13 +264,13 @@ ASKPASS_EOF
       log_info "  $repo - already exists, skipping"
     else
       log_info "  Cloning $repo..."
-      GIT_ASKPASS="$askpass_script" git clone --depth=1 \
+      GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass_script" git clone --depth=1 \
         "https://bitbucket.org/${BB_WORKSPACE}/${repo}.git" \
         "$repo_path"
     fi
   done
 
-  rm -f "$askpass_script"
+  rm -rf "$tmp_dir"
 }
 
 # =============================================================================
