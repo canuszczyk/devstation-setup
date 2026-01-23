@@ -228,7 +228,6 @@ discover_bitbucket_repos() {
 }
 
 clone_bitbucket_repos() {
-  shift  # Skip workspace param (using global BB_WORKSPACE)
   local repos=("$@")
 
   if [[ ${#repos[@]} -eq 0 ]]; then
@@ -477,7 +476,7 @@ main() {
 
         if [[ ${#selected_repos[@]} -gt 0 ]]; then
           log_info "Cloning ${#selected_repos[@]} repos to $CODE_DIR..."
-          clone_bitbucket_repos "$BB_WORKSPACE" "${selected_repos[@]}"
+          clone_bitbucket_repos "${selected_repos[@]}"
           repos_cloned=1
           log_success "Bitbucket repos cloned"
         fi
