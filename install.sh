@@ -235,28 +235,15 @@ clone_bitbucket_repos() {
     return
   fi
 
-  # Store credentials in temp files to avoid shell interpretation issues
-  local tmp_dir askpass_script
-  tmp_dir=$(mktemp -d)
-  printf '%s' "$BB_USERNAME" > "$tmp_dir/user"
-  printf '%s' "$BB_APP_PASSWORD" > "$tmp_dir/pass"
-
-  askpass_script="$tmp_dir/askpass"
-  cat > "$askpass_script" << 'ASKPASS_EOF'
-#!/bin/bash
-dir="$(dirname "$0")"
-case "$1" in
-  *Username*|*username*) cat "$dir/user" ;;
-  *Password*|*password*) cat "$dir/pass" ;;
-esac
-ASKPASS_EOF
-  chmod +x "$askpass_script"
-
-  # Also store in git-credentials for future use (URL-encoded)
-  local encoded_user encoded_token
-  encoded_user=$(urlencode "$BB_USERNAME")
-  encoded_token=$(urlencode "$BB_APP_PASSWORD")
-  echo "https://${encoded_user}:${encoded_token}@bitbucket.org" >> ~/.git-credentials
+  # Add credentials to ~/.netrc (git checks this file)
+  # Remove any existing bitbucket.org entry first
+  if [[ -f ~/.netrc ]]; then
+    grep -v "machine bitbucket.org" ~/.netrc > ~/.netrc.tmp || true
+    mv ~/.netrc.tmp ~/.netrc
+  fi
+  printf 'machine bitbucket.org\nlogin %s\npassword %s\n' \
+    "$BB_USERNAME" "$BB_APP_PASSWORD" >> ~/.netrc
+  chmod 600 ~/.netrc
 
   for repo in "${repos[@]}"; do
     local repo_path="$CODE_DIR/$repo"
@@ -264,13 +251,11 @@ ASKPASS_EOF
       log_info "  $repo - already exists, skipping"
     else
       log_info "  Cloning $repo..."
-      GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass_script" git clone --depth=1 \
+      git clone --depth=1 \
         "https://bitbucket.org/${BB_WORKSPACE}/${repo}.git" \
         "$repo_path"
     fi
   done
-
-  rm -rf "$tmp_dir"
 }
 
 # =============================================================================
