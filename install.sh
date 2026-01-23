@@ -96,13 +96,12 @@ prompt_gh_auth() {
   return 0
 }
 
-discover_github_repos_with_devcontainer() {
+discover_github_repos() {
   local gh_target="$1"
-  local repos=()
 
-  log_info "Searching for repos with .devcontainer/ in $gh_target..."
+  log_info "Fetching repos from $gh_target..."
 
-  # Get all repos for the user/org
+  # Get all non-archived repos for the user/org
   local all_repos
   all_repos=$(gh repo list "$gh_target" --limit 100 --json name,isArchived --jq '.[] | select(.isArchived == false) | .name' 2>/dev/null || echo "")
 
@@ -111,30 +110,11 @@ discover_github_repos_with_devcontainer() {
     return
   fi
 
-  # Check each repo for .devcontainer folder
-  local count=0
   local total
   total=$(echo "$all_repos" | wc -l)
+  log_success "Found $total repos"
 
-  while IFS= read -r repo; do
-    ((count++)) || true
-    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo" >&2
-
-    # Try to list .devcontainer directory
-    if gh api "repos/$gh_target/$repo/contents/.devcontainer" &>/dev/null; then
-      repos+=("$repo")
-    fi
-  done <<< "$all_repos"
-
-  echo "" >&2  # Clear the progress line
-
-  if [[ ${#repos[@]} -eq 0 ]]; then
-    log_warn "No repos with .devcontainer/ found"
-  else
-    log_success "Found ${#repos[@]} repos with devcontainer configs"
-  fi
-
-  printf '%s\n' "${repos[@]}"
+  printf '%s\n' "$all_repos"
 }
 
 clone_github_repos() {
@@ -210,10 +190,8 @@ prompt_bitbucket_auth() {
   fi
 }
 
-discover_bitbucket_repos_with_devcontainer() {
-  local repos=()
-
-  log_info "Searching for repos with .devcontainer/ in $BB_WORKSPACE..."
+discover_bitbucket_repos() {
+  log_info "Fetching repos from $BB_WORKSPACE..."
 
   # Paginate through all repos
   local page_url="https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE?pagelen=100"
@@ -237,33 +215,9 @@ discover_bitbucket_repos_with_devcontainer() {
     return
   fi
 
-  # Check each repo for .devcontainer folder
-  local count=0
-  local total=${#all_repos[@]}
+  log_success "Found ${#all_repos[@]} repos"
 
-  for repo in "${all_repos[@]}"; do
-    ((count++)) || true
-    printf "\r  Checking repo %d/%d: %-50s" "$count" "$total" "$repo" >&2
-
-    # Try to get .devcontainer directory contents
-    local dc_check
-    dc_check=$(curl -s -u "$BB_USERNAME:$BB_APP_PASSWORD" \
-      "https://api.bitbucket.org/2.0/repositories/$BB_WORKSPACE/$repo/src/HEAD/.devcontainer/" 2>/dev/null)
-
-    if echo "$dc_check" | jq -e '.values' &>/dev/null; then
-      repos+=("$repo")
-    fi
-  done
-
-  echo "" >&2  # Clear the progress line
-
-  if [[ ${#repos[@]} -eq 0 ]]; then
-    log_warn "No repos with .devcontainer/ found"
-  else
-    log_success "Found ${#repos[@]} repos with devcontainer configs"
-  fi
-
-  printf '%s\n' "${repos[@]}"
+  printf '%s\n' "${all_repos[@]}"
 }
 
 clone_bitbucket_repos() {
@@ -471,7 +425,7 @@ main() {
 
       if [[ -n "$gh_target" ]]; then
         # Discover repos
-        mapfile -t discovered_repos < <(discover_github_repos_with_devcontainer "$gh_target")
+        mapfile -t discovered_repos < <(discover_github_repos "$gh_target")
 
         if [[ ${#discovered_repos[@]} -gt 0 ]]; then
           # Select repos
@@ -498,7 +452,7 @@ main() {
   if [[ "$configure_bitbucket" =~ ^[Yy]$ ]]; then
     if prompt_bitbucket_auth; then
       # Discover repos
-      mapfile -t discovered_repos < <(discover_bitbucket_repos_with_devcontainer)
+      mapfile -t discovered_repos < <(discover_bitbucket_repos)
 
       if [[ ${#discovered_repos[@]} -gt 0 ]]; then
         # Select repos
