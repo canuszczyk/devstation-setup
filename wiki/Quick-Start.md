@@ -13,7 +13,7 @@ This guide walks you through setting up a fresh Ubuntu/Debian server as a devcon
 On your fresh server, run the bootstrap script:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 ```
 
 This installs all dependencies and takes 5-10 minutes depending on your connection speed.

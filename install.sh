@@ -62,7 +62,7 @@ check_prerequisites() {
     log_error "Missing prerequisites: ${missing[*]}"
     echo ""
     echo "Please run the bootstrap script first:"
-    echo "  curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash"
+    echo "  curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash"
     echo ""
     exit 1
   fi

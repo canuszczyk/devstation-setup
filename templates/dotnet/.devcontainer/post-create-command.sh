@@ -138,7 +138,7 @@ install_ai_clis() {
 
   # Codexaw (forked) - install first, then rename binary (timeout 120s)
   log_info "Installing Codexaw CLI…"
-  if timeout 120 npm install -g https://github.com/canuszczyk/codex/releases/latest/download/codexaw.tgz; then
+  if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
     if [ -x "$bin_dir/codex" ]; then
       mv "$bin_dir/codex" "$bin_dir/codexaw" >/dev/null 2>&1 || true
     fi

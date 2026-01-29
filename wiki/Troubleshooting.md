@@ -82,7 +82,7 @@ hash -r
 
 **Solution:** Run the bootstrap script first:
 ```bash
-curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 # Log out and back in
 ~/devstation-setup/install.sh
 ```
@@ -287,7 +287,7 @@ gh auth login
 
 If you encounter an issue not covered here:
 
-1. Check the [GitHub Issues](https://github.com/canuszczyk/devstation-setup/issues)
+1. Check the [GitHub Issues](https://github.com/digitalsoftwaresolutionsrepos/devstation-setup/issues)
 2. Search for similar problems
 3. Open a new issue with:
    - OS version (`cat /etc/os-release`)

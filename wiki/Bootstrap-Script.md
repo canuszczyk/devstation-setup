@@ -7,13 +7,13 @@ The `bootstrap.sh` script is Phase 1 of the devstation setup process. It install
 ### One-liner (recommended)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 ```
 
 ### Manual execution
 
 ```bash
-git clone https://github.com/canuszczyk/devstation-setup.git ~/devstation-setup
+git clone https://github.com/digitalsoftwaresolutionsrepos/devstation-setup.git ~/devstation-setup
 chmod +x ~/devstation-setup/bootstrap.sh
 ~/devstation-setup/bootstrap.sh
 ```

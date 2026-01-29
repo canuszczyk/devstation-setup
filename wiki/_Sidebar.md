@@ -18,5 +18,5 @@
 
 **Links**
 
-* [Repository](https://github.com/canuszczyk/devstation-setup)
-* [Issues](https://github.com/canuszczyk/devstation-setup/issues)
+* [Repository](https://github.com/digitalsoftwaresolutionsrepos/devstation-setup)
+* [Issues](https://github.com/digitalsoftwaresolutionsrepos/devstation-setup/issues)

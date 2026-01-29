@@ -13,7 +13,7 @@ Devstation Setup is a two-phase provisioning system for setting up development s
 
 ```bash
 # Phase 1: Bootstrap (run on fresh Ubuntu/Debian server)
-curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 
 # Log out and back in (for Docker group membership)
 exit

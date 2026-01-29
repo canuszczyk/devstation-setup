@@ -17,7 +17,7 @@ If any are missing, you'll see:
 [ERROR] Missing prerequisites: docker gh (GitHub CLI)
 
 Please run the bootstrap script first:
-  curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+  curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 ```
 
 ## Usage

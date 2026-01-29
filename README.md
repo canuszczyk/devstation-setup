@@ -17,7 +17,7 @@ Automated two-phase setup for a Linux devcontainer-based development environment
 ### Phase 1: Bootstrap (Fresh Ubuntu/Debian Server)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 ```
 
 This installs:
@@ -155,7 +155,7 @@ devstation-setup/
 The `wiki/` directory contains source files for the [GitHub Wiki](../../wiki). To publish:
 
 ```bash
-git clone https://github.com/canuszczyk/devstation-setup.wiki.git /tmp/wiki
+git clone https://github.com/digitalsoftwaresolutionsrepos/devstation-setup.wiki.git /tmp/wiki
 cp ~/devstation-setup/wiki/*.md /tmp/wiki/
 cd /tmp/wiki && git add . && git commit -m "Update docs" && git push
 ```

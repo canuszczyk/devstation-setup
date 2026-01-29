@@ -5,12 +5,12 @@ set -euo pipefail
 # Devstation Bootstrap Script
 # =============================================================================
 # This script installs core dependencies on a fresh Ubuntu/Debian server.
-# Run via: curl -sSL https://raw.githubusercontent.com/canuszczyk/devstation-setup/master/bootstrap.sh | bash
+# Run via: curl -sSL https://raw.githubusercontent.com/digitalsoftwaresolutionsrepos/devstation-setup/master/bootstrap.sh | bash
 #
 # After running this script, run ~/devstation-setup/install.sh to configure repos.
 # =============================================================================
 
-DEVSTATION_REPO="https://github.com/canuszczyk/devstation-setup.git"
+DEVSTATION_REPO="https://github.com/digitalsoftwaresolutionsrepos/devstation-setup.git"
 DEVSTATION_DIR="$HOME/devstation-setup"
 
 # Colors for output
