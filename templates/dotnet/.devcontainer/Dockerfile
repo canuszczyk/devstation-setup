@@ -38,7 +38,7 @@ RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-l
 
 # User setup
 ARG USERNAME=vscode
-ARG USER_UID=1001
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 RUN groupadd --gid $USER_GID $USERNAME && \
@@ -46,7 +46,8 @@ RUN groupadd --gid $USER_GID $USERNAME && \
     echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     mkdir -p /run/user/$USER_UID && \
     chown $USERNAME:$USERNAME /run/user/$USER_UID && \
-    chmod 700 /run/user/$USER_UID
+    chmod 700 /run/user/$USER_UID && \
+    ln -sf /home/$USERNAME /home/carlanuszczyk
 
 # Core env
 ENV NPM_CONFIG_CACHE=/home/${USERNAME}/.npm

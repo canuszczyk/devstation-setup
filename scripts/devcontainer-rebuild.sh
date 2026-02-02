@@ -118,23 +118,6 @@ calc_id_label() {
   echo "${key}=${val}"
 }
 
-protect_repo_folder() {
-  local repo_root="$1"
-  local prefix="${2:-}"
-
-  # Protect the repo root folder from accidental deletion
-  # - Set sticky bit on parent dir so only owner can delete subdirs
-  # - Make repo folder root-owned with 777 so anyone can write inside
-  # - Combined: only root can delete the repo folder
-  echo "${prefix}Protecting repo folder from deletion..."
-  docker run --rm -v "$(dirname "$repo_root"):/parent" alpine sh -c "
-    chmod 1777 /parent
-    chown root:root '/parent/$(basename "$repo_root")'
-    chmod 777 '/parent/$(basename "$repo_root")'
-  " 2>/dev/null && echo "${prefix}Repo folder protected (sticky bit + root-owned)" || \
-    echo "${prefix}Warning: Could not protect repo folder"
-}
-
 remove_labeled_containers_and_images() {
   local id_label="$1"
   local repo_root="$2"
@@ -254,7 +237,6 @@ build_single_repo() {
       # Configure gh CLI for git authentication
       docker exec "$cid" gh auth setup-git 2>/dev/null || true
       echo "${prefix}GitHub CLI configured for git"
-      protect_repo_folder "$repo_root" "$prefix"
     else
       echo "${prefix}Verification FAILED: $BUILD_VERIFY_RESULT"
       return 1

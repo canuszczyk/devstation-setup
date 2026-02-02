@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Post-create command for .NET devcontainer
+# Post-create command for Python devcontainer
 # Usage: ./post-create-command.sh [--quick]
 
 QUICK_MODE=0
@@ -18,16 +18,14 @@ log_info() { printf "\033[0;36m[info]\033[0m %s\n" "$*"; }
 echo "=== Post-Create Command (quick=$QUICK_MODE) ==="
 
 # --- Fix Volume Permissions ---
-# Docker volumes may be created with different UID ownership
-# Fix npm cache and nuget cache permissions if they exist
 fix_permissions() {
   log_info "Fixing volume permissions..."
   # Fix Docker volumes
+  if [[ -d "$HOME/.cache/pip" ]]; then
+    sudo chown -R "$(id -u):$(id -g)" "$HOME/.cache/pip" 2>/dev/null || true
+  fi
   if [[ -d "$HOME/.npm" ]]; then
     sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm" 2>/dev/null || true
-  fi
-  if [[ -d "$HOME/.nuget" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.nuget" 2>/dev/null || true
   fi
   if [[ -d "$HOME/.npm-global" ]]; then
     sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm-global" 2>/dev/null || true
@@ -40,50 +38,15 @@ fix_permissions() {
 
 fix_permissions
 
-# --- PostgreSQL Setup ---
-setup_postgres() {
-  echo "Setting up PostgreSQL..."
-
-  local pgdata="${PGDATA:-/workspaces/$(basename "$PWD")/.devcontainer/pgdata}"
-
-  # Initialize if needed
-  if [[ ! -d "$pgdata" || ! -f "$pgdata/PG_VERSION" ]]; then
-    echo "Initializing PostgreSQL data directory..."
-    mkdir -p "$pgdata"
-    initdb -D "$pgdata" --auth=trust --encoding=UTF8
+# --- pip Install ---
+install_pip() {
+  if [[ -f "requirements.txt" ]]; then
+    log_info "Installing pip packages..."
+    pip install -r requirements.txt || true
   fi
-
-  # Start PostgreSQL if not running
-  if ! pg_isready -q 2>/dev/null; then
-    echo "Starting PostgreSQL..."
-    pg_ctl -D "$pgdata" -l "$pgdata/logfile" start -w -t 30 || true
-  fi
-
-  # Wait for PostgreSQL to be ready
-  for i in {1..30}; do
-    if pg_isready -q 2>/dev/null; then
-      echo "PostgreSQL is ready"
-      return 0
-    fi
-    sleep 1
-  done
-
-  echo "Warning: PostgreSQL may not be ready"
-}
-
-# --- .NET Restore ---
-restore_dotnet() {
-  if [[ -f "*.sln" ]] || ls *.csproj 1>/dev/null 2>&1; then
-    echo "Restoring .NET packages..."
-    dotnet restore || true
-  fi
-}
-
-# --- npm Install ---
-install_npm() {
-  if [[ -f "package.json" ]]; then
-    echo "Installing npm packages..."
-    npm install || true
+  if [[ -f "pyproject.toml" ]]; then
+    log_info "Installing project with pyproject.toml..."
+    pip install -e . || true
   fi
 }
 
@@ -137,22 +100,20 @@ install_ai_clis() {
     log_info "Claude CLI already installed."
   fi
 
-  # Gemini CLI via npm (timeout 600s - large package with 500+ deps, slow on constrained CPUs)
-  log_info "Installing Gemini CLI (this may take several minutes)…"
+  # Gemini CLI via npm (timeout 600s - large package)
+  log_info "Installing Gemini CLI (this may take several minutes)..."
   if ! timeout 600 npm install -g @google/gemini-cli 2>&1; then
     log_err "FAILED: Gemini CLI installation (npm install failed)"
     FAILED_STEPS+=("gemini-cli")
   elif ! command -v gemini >/dev/null 2>&1; then
     log_err "FAILED: Gemini CLI installation (binary not found after install)"
-    log_err "  npm prefix: $(npm config get prefix)"
-    log_err "  PATH: $PATH"
     FAILED_STEPS+=("gemini-cli")
   else
     log_info "Gemini CLI installed: $(command -v gemini)"
   fi
 
-  # Codexaw (forked) - install first, then rename binary (timeout 120s)
-  log_info "Installing Codexaw CLI…"
+  # Codexaw (forked)
+  log_info "Installing Codexaw CLI..."
   if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
     if [ -x "$bin_dir/codex" ]; then
       mv "$bin_dir/codex" "$bin_dir/codexaw" >/dev/null 2>&1 || true
@@ -162,15 +123,15 @@ install_ai_clis() {
     FAILED_STEPS+=("codexaw-cli")
   fi
 
-  # Official Codex (upstream) (timeout 120s)
-  log_info "Installing Codex CLI…"
+  # Official Codex (upstream)
+  log_info "Installing Codex CLI..."
   if ! timeout 120 npm install -g @openai/codex; then
     log_err "FAILED: Codex CLI installation"
     FAILED_STEPS+=("codex-cli")
   fi
 
   # Verify AI CLI binaries are available
-  log_info "Verifying AI CLI installations…"
+  log_info "Verifying AI CLI installations..."
   if ! command -v claude >/dev/null 2>&1; then
     log_err "VERIFICATION FAILED: claude not found in PATH"
     FAILED_STEPS+=("claude-verify")
@@ -187,15 +148,12 @@ install_ai_clis() {
 
 # --- Main ---
 main() {
-  setup_postgres
-
   if [[ "$QUICK_MODE" == "0" ]]; then
-    restore_dotnet
-    install_npm
+    install_pip
     install_ai_clis
   fi
 
-  # Check for AI CLI failures and exit with error if any failed (unless skipped or quick mode)
+  # Check for AI CLI failures
   if [[ "$QUICK_MODE" != "1" ]] && [[ "${SKIP_AI_CLIS:-0}" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
     log_err "=========================================="
     log_err "POST-CREATE FAILED: AI CLI installation errors"

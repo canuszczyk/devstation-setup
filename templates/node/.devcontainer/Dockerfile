@@ -22,15 +22,17 @@ RUN apt-get update && apt-get install -y \
 
 # User setup
 ARG USERNAME=vscode
-ARG USER_UID=1001
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
-RUN groupadd --gid $USER_GID $USERNAME && \
-    useradd --uid $USER_UID --gid $USER_GID -m $USERNAME && \
+# Rename existing node user/group to vscode (node base image has node:1000)
+RUN usermod -l $USERNAME -d /home/$USERNAME -m node && \
+    groupmod -n $USERNAME node && \
     echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     mkdir -p /run/user/$USER_UID && \
     chown $USERNAME:$USERNAME /run/user/$USER_UID && \
-    chmod 700 /run/user/$USER_UID
+    chmod 700 /run/user/$USER_UID && \
+    ln -sf /home/$USERNAME /home/carlanuszczyk
 
 # Core env
 ENV NPM_CONFIG_CACHE=/home/${USERNAME}/.npm

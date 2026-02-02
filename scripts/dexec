@@ -43,5 +43,19 @@ if [ -z "$cid" ]; then
 fi
 
 ws_name="$(basename "$repo_path")"
+
+# Try to read workspaceFolder from devcontainer.json
+ws_folder=""
+devcontainer_json="$repo_path/.devcontainer/devcontainer.json"
+if [ -f "$devcontainer_json" ]; then
+  # Extract workspaceFolder using grep/sed (avoid jq dependency)
+  ws_folder="$(grep -o '"workspaceFolder"[[:space:]]*:[[:space:]]*"[^"]*"' "$devcontainer_json" 2>/dev/null | sed 's/.*: *"\([^"]*\)".*/\1/' || true)"
+fi
+
+# Fall back to /workspaces/<name> if not specified
+if [ -z "$ws_folder" ]; then
+  ws_folder="/workspaces/${ws_name}"
+fi
+
 echo "Attaching to container $cid (${ws_name})..."
-exec docker exec -it -u vscode -w "/home/vscode/${ws_name}" "$cid" "$cmd"
+exec docker exec -it -u vscode -w "$ws_folder" "$cid" "$cmd"

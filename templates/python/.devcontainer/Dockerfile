@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y \
 
 # User setup
 ARG USERNAME=vscode
-ARG USER_UID=1001
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 RUN groupadd --gid $USER_GID $USERNAME && \
@@ -29,15 +29,29 @@ RUN groupadd --gid $USER_GID $USERNAME && \
     echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     mkdir -p /run/user/$USER_UID && \
     chown $USERNAME:$USERNAME /run/user/$USER_UID && \
-    chmod 700 /run/user/$USER_UID
+    chmod 700 /run/user/$USER_UID && \
+    ln -sf /home/$USERNAME /home/carlanuszczyk
+
+# Install Node.js (for AI CLI tools)
+ARG NODE_VERSION=20.11.0
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
+    && mkdir -p /usr/local/lib/nodejs \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs \
+    && rm /tmp/node.tar.xz \
+    && ln -sf /usr/local/lib/nodejs/node-v${NODE_VERSION}-linux-x64/bin/node /usr/local/bin/node \
+    && ln -sf /usr/local/lib/nodejs/node-v${NODE_VERSION}-linux-x64/bin/npm /usr/local/bin/npm \
+    && ln -sf /usr/local/lib/nodejs/node-v${NODE_VERSION}-linux-x64/bin/npx /usr/local/bin/npx
 
 # Core env
 ENV LANG=C.UTF-8 LANGUAGE=en_US:en LC_ALL=C.UTF-8
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_CACHE_DIR=/home/${USERNAME}/.cache/pip
+ENV NPM_CONFIG_CACHE=/home/${USERNAME}/.npm
+ENV NODE_VERSION=20.11.0
+ENV NODE_HOME=/usr/local/lib/nodejs/node-v${NODE_VERSION}-linux-x64
 
-ENV PATH="${PATH}:/home/${USERNAME}/.local/bin"
+ENV PATH="${NODE_HOME}/bin:${PATH}:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.npm-global/bin"
 
 # Install gitui (terminal git UI)
 RUN ARCH=$(uname -m) && \
