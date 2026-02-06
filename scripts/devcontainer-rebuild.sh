@@ -286,6 +286,18 @@ is_multi_repo_dir() {
   return 1
 }
 
+# Format seconds into human-readable duration (e.g. "2m 34s")
+format_duration() {
+  local secs="$1"
+  if (( secs >= 3600 )); then
+    printf '%dh %dm %ds' $((secs / 3600)) $(( (secs % 3600) / 60 )) $((secs % 60))
+  elif (( secs >= 60 )); then
+    printf '%dm %ds' $((secs / 60)) $((secs % 60))
+  else
+    printf '%ds' "$secs"
+  fi
+}
+
 main() {
   require devcontainer
   require docker
@@ -311,64 +323,182 @@ main() {
     done
     echo ""
 
-    # Build repos sequentially, fail-fast on first error
-    local successful_repos=()
+    # Build all repos in parallel
+    # Each build runs as a background process with output going to a log file
+    local log_dir="/tmp/devcontainer-build-logs"
+    mkdir -p "$log_dir"
+    local total_start=$SECONDS
+
+    # Associative arrays for tracking PIDs and repo info
+    declare -A pids=()       # pids[name]=pid
+    declare -A repo_paths=() # repo_paths[name]=path
+
+    # Clean up any stale status files from previous runs
+    rm -f "$log_dir"/*.status "$log_dir"/*.duration 2>/dev/null
+
+    # Ordered list of repo names (preserves discovery order)
+    local -a repo_names=()
 
     for repo in "${repos[@]}"; do
       local name
       name="$(basename "$repo")"
+      local logfile="$log_dir/${name}.log"
 
-      echo ""
-      echo "========================================"
-      echo "Building: $name"
-      echo "========================================"
-      echo ""
+      repo_paths["$name"]="$repo"
+      repo_names+=("$name")
 
-      export SKIP_AI_CLIS="$SKIP_AI_CLIS"
-      export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
-      export BUILD_VERIFY_RESULT=""
+      # Launch build in background subshell
+      (
+        export SKIP_AI_CLIS="$SKIP_AI_CLIS"
+        export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
+        export BUILD_VERIFY_RESULT=""
+        local start=$SECONDS
+        if build_single_repo "$repo" "$FORCE" "$PRUNE" "[$name] " > "$logfile" 2>&1; then
+          echo "$((SECONDS - start))" > "$log_dir/${name}.duration"
+          echo "ok" > "$log_dir/${name}.status"
+        else
+          echo "$((SECONDS - start))" > "$log_dir/${name}.duration"
+          echo "FAILED" > "$log_dir/${name}.status"
+        fi
+      ) &
+      pids["$name"]=$!
+    done
 
-      if build_single_repo "$repo" "$FORCE" "$PRUNE" "[$name] "; then
-        echo ""
-        echo "[$name] *** Build completed successfully ***"
-        successful_repos+=("$repo")
-      else
-        echo ""
-        echo "[$name] *** Build FAILED ***"
-        echo ""
-        echo "=== Build Summary (STOPPED ON FAILURE) ==="
-        echo ""
-        for r in "${successful_repos[@]}"; do
-          echo "✓ $(basename "$r") - all tools verified"
+    local total=${#repo_names[@]}
+
+    # Print initial status table - one line per repo
+    for name in "${repo_names[@]}"; do
+      printf "  %-30s %-52s %s\n" "$name" "starting..." "0s"
+    done
+
+    # Poll loop: update each line in-place using ANSI cursor movement
+    local finished=0
+    local failed=0
+    declare -A reported=()
+
+    while (( finished < total )); do
+      for i in "${!repo_names[@]}"; do
+        local name="${repo_names[$i]}"
+        [[ -n "${reported[$name]:-}" ]] && continue
+        if [[ -f "$log_dir/${name}.status" ]]; then
+          local status
+          status="$(cat "$log_dir/${name}.status")"
+          local dur="0"
+          [[ -f "$log_dir/${name}.duration" ]] && dur="$(cat "$log_dir/${name}.duration")"
+          # Move cursor up to this repo's line and overwrite it
+          local lines_up=$(( total - i ))
+          printf "\033[%dA\r" "$lines_up"
+          if [[ "$status" == "ok" ]]; then
+            printf "  %-30s %-52s %s\033[K\n" "$name" "successful" "$(format_duration "$dur")"
+          else
+            printf "  %-30s %-52s %s\033[K\n" "$name" "FAILED" "$(format_duration "$dur")"
+            failed=$((failed + 1))
+          fi
+          # Move cursor back down to bottom
+          if (( lines_up > 1 )); then
+            printf "\033[%dB" $(( lines_up - 1 ))
+          fi
+          reported["$name"]=1
+          finished=$((finished + 1))
+        fi
+      done
+
+      if (( finished < total )); then
+        # Update running repos with current phase + elapsed time
+        for i in "${!repo_names[@]}"; do
+          local name="${repo_names[$i]}"
+          [[ -n "${reported[$name]:-}" ]] && continue
+          local elapsed=$((SECONDS - total_start))
+          local logfile="$log_dir/${name}.log"
+          # Determine current phase from log content
+          local phase="starting..."
+          if [[ -f "$logfile" ]]; then
+            if grep -q "Verification: all tools present" "$logfile" 2>/dev/null; then
+              phase="configuring git..."
+            elif grep -q "Verifying container tools" "$logfile" 2>/dev/null; then
+              phase="verifying tools..."
+            elif grep -q "Devcontainer is up" "$logfile" 2>/dev/null; then
+              phase="verifying tools..."
+            elif grep -q "postStartCommand" "$logfile" 2>/dev/null; then
+              phase="post-start command..."
+            elif grep -q "postCreateCommand\|Post-Create" "$logfile" 2>/dev/null; then
+              # Try to get a specific post-create step
+              local pc_line
+              pc_line="$(grep -E '(Installing|Restoring|Setting up|Starting|Fixing|Waiting)' "$logfile" 2>/dev/null | tail -1 | sed 's/^\[.*\] //' | cut -c1-48)" || true
+              if [[ -n "$pc_line" ]]; then
+                phase="$pc_line"
+              else
+                phase="post-create command..."
+              fi
+            elif grep -q "docker buildx build\|building with" "$logfile" 2>/dev/null; then
+              # Try to get the docker build step
+              local build_step
+              build_step="$(grep -oE '\[[0-9]+/[0-9]+\] [A-Z]+' "$logfile" 2>/dev/null | tail -1)" || true
+              if [[ -n "$build_step" ]]; then
+                phase="docker build $build_step"
+              else
+                phase="docker build..."
+              fi
+            elif grep -q "Starting devcontainer up" "$logfile" 2>/dev/null; then
+              phase="devcontainer up..."
+            elif grep -q "removing\|Removing" "$logfile" 2>/dev/null; then
+              phase="removing old containers..."
+            elif grep -q "Repo root:" "$logfile" 2>/dev/null; then
+              phase="initializing..."
+            fi
+          fi
+          local lines_up=$(( total - i ))
+          printf "\033[%dA\r" "$lines_up"
+          printf "  %-30s %-52s %s\033[K\n" "$name" "$phase" "$(format_duration "$elapsed")"
+          if (( lines_up > 1 )); then
+            printf "\033[%dB" $(( lines_up - 1 ))
+          fi
         done
-        echo "✗ $name - build or verification failed"
-        echo ""
-        echo "Remaining repos were NOT built due to failure."
-        exit 1
+        sleep 3
       fi
     done
+
+    # Wait for all background processes to fully exit (|| true to avoid set -e)
+    wait 2>/dev/null || true
 
     echo ""
     echo "=== Build Summary ==="
     echo ""
 
-    for repo in "${successful_repos[@]}"; do
-      echo "✓ $(basename "$repo") - all tools verified"
+    local succeeded=$(( total - failed ))
+    for name in "${repo_names[@]}"; do
+      local status="ok"
+      [[ -f "$log_dir/${name}.status" ]] && status="$(cat "$log_dir/${name}.status")"
+      local dur="0"
+      [[ -f "$log_dir/${name}.duration" ]] && dur="$(cat "$log_dir/${name}.duration")"
+      if [[ "$status" == "ok" ]]; then
+        printf "  %-40s %s\n" "$name" "$(format_duration "$dur")"
+      else
+        printf "  %-40s %s  FAILED\n" "$name" "$(format_duration "$dur")"
+      fi
     done
 
     echo ""
-    echo "Results: ${#successful_repos[@]} succeeded, 0 failed"
+    echo "Results: ${succeeded} succeeded, ${failed} failed"
+    echo "Total time: $(format_duration "$((SECONDS - total_start))")"
+    echo "Build logs: $log_dir/"
     echo ""
+
+    if (( failed > 0 )); then
+      exit 1
+    fi
 
     # Show attach instructions for successful builds
     echo "=== Attach Instructions ==="
     echo ""
-    for repo in "${successful_repos[@]}"; do
-      local name
-      name="$(basename "$repo")"
-      echo "$name:"
-      echo "  /home/vscode/dexec $repo"
-      echo ""
+    for name in "${repo_names[@]}"; do
+      local status="ok"
+      [[ -f "$log_dir/${name}.status" ]] && status="$(cat "$log_dir/${name}.status")"
+      if [[ "$status" == "ok" ]]; then
+        echo "$name:"
+        echo "  dexec ${repo_paths[$name]}"
+        echo ""
+      fi
     done
   else
     # Single repo mode (original behavior)
@@ -392,10 +522,11 @@ main() {
     export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
     export BUILD_VERIFY_RESULT=""
 
+    local total_start=$SECONDS
     if ! build_single_repo "$repo_root" "$FORCE" "$PRUNE"; then
       echo ""
       echo "=== Build Summary ==="
-      echo "✗ $(basename "$repo_root") - build or verification failed"
+      echo "  $(basename "$repo_root")  $(format_duration "$((SECONDS - total_start))")  FAILED"
       exit 1
     fi
 
@@ -409,13 +540,13 @@ main() {
 
     echo ""
     echo "=== Build Summary ==="
-    echo "✓ $(basename "$repo_root") - all tools verified"
+    echo "  $(basename "$repo_root")  $(format_duration "$((SECONDS - total_start))")"
     echo ""
 
     if [ -n "${cid:-}" ]; then
       echo "Container: $cid"
       echo "Attach:"
-      echo "  /home/vscode/dexec $repo_root"
+      echo "  dexec $repo_root"
     fi
   fi
 }

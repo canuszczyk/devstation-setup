@@ -2,6 +2,14 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install additional .NET SDKs (6.0 and 8.0) alongside the base 9.0
+# Many repos still target net6.0; some target net8.0. All three coexist in /usr/share/dotnet.
+RUN curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --channel 6.0 --install-dir /usr/share/dotnet \
+    && /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh
+
 # Base tooling: sudo, editors, network tools, Python, Postgres, gh, etc.
 RUN apt-get update && apt-get install -y \
     sudo nano curl gnupg wget ca-certificates apt-transport-https \

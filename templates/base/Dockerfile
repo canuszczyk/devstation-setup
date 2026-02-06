@@ -4,7 +4,7 @@
 # Built once, cached locally. Each repo's Dockerfile becomes:
 #   FROM devstation-base:latest
 #
-# Base: .NET 9 SDK (RepositoryCloner needs it); .NET 8 SDK installed alongside.
+# Base: .NET 9 SDK (RepositoryCloner needs it); .NET 6 + 8 SDKs installed alongside.
 # Union of tools from: AgentWatch, Gradewave, DeploymentInfra, codex, RepositoryCloner
 # =============================================================================
 
@@ -72,11 +72,13 @@ RUN _start=$SECONDS && echo "▶ [4/21] Installing Playwright/Chrome deps + Goog
     echo "✓ [4/21] done in $((SECONDS - _start))s"
 
 # ---------------------------------------------------------------------------
-# [5] .NET 8 SDK (AgentWatch, Gradewave, DeploymentInfra, codex)
+# [5] .NET 6 + 8 SDKs (goldrushcitykiosk, httpsasmodule, abstractcorenugetpackages need 6.0;
+#     AgentWatch, Gradewave, DeploymentInfra, codex need 8.0; base image provides 9.0)
 # ---------------------------------------------------------------------------
-RUN _start=$SECONDS && echo "▶ [5/21] Installing .NET 8 SDK…" && \
+RUN _start=$SECONDS && echo "▶ [5/21] Installing .NET 6 + 8 SDKs…" && \
     curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh && \
     chmod +x /tmp/dotnet-install.sh && \
+    /tmp/dotnet-install.sh --channel 6.0 --install-dir /usr/share/dotnet && \
     /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet && \
     rm /tmp/dotnet-install.sh && \
     echo "✓ [5/21] done in $((SECONDS - _start))s"
@@ -267,12 +269,21 @@ RUN echo '{"hasCompletedOnboarding": true}' > /home/${USERNAME}/.claude.json && 
     echo "✓ [22/23] Baked hasCompletedOnboarding into .claude.json"
 
 # ---------------------------------------------------------------------------
-# [23] (as vscode) Pre-install AI CLIs (claude, codex)
+# [23] (as vscode) Pre-install AI CLIs (claude, gemini, codex, codexaw)
 # ---------------------------------------------------------------------------
-RUN _start=$SECONDS && echo "▶ [23/23] Installing AI CLIs (claude, codex)…" && \
+RUN _start=$SECONDS && echo "▶ [23/23] Installing AI CLIs (claude, gemini, codex, codexaw)…" && \
     curl -fsSL https://claude.ai/install.sh | bash && \
-    npm install -g @openai/codex && \
-    echo "✓ [23/23] done in $((SECONDS - _start))s"
+    npm install -g @openai/codex @google/gemini-cli && \
+    NPM_CONFIG_PREFIX=${CODEXAW_PREFIX} npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz && \
+    if [ -x "${CODEXAW_PREFIX}/bin/codex" ]; then mv "${CODEXAW_PREFIX}/bin/codex" "${CODEXAW_PREFIX}/bin/codexaw"; fi && \
+    echo "✓ [23/24] done in $((SECONDS - _start))s"
+
+# ---------------------------------------------------------------------------
+# [24] (as vscode) Pre-install Playwright Chromium browser
+# ---------------------------------------------------------------------------
+RUN _start=$SECONDS && echo "▶ [24/24] Installing Playwright Chromium…" && \
+    npx -y playwright install chromium && \
+    echo "✓ [24/24] done in $((SECONDS - _start))s"
 
 # ---------------------------------------------------------------------------
 # Final config (no EXPOSE — each repo sets ports via devcontainer.json)

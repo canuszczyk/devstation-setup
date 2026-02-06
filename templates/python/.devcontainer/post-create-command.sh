@@ -146,11 +146,30 @@ install_ai_clis() {
   fi
 }
 
+# --- Language Servers for Claude Code ---
+install_language_servers() {
+  log_info "Installing language servers for Claude Code plugins..."
+
+  # TypeScript Language Server
+  if ! command -v typescript-language-server >/dev/null 2>&1; then
+    log_info "Installing typescript-language-server..."
+    if npm install -g typescript-language-server typescript 2>&1; then
+      log_info "typescript-language-server installed"
+    else
+      log_err "FAILED: typescript-language-server installation"
+      FAILED_STEPS+=("typescript-language-server")
+    fi
+  else
+    log_info "typescript-language-server already installed."
+  fi
+}
+
 # --- Main ---
 main() {
   if [[ "$QUICK_MODE" == "0" ]]; then
     install_pip
     install_ai_clis
+    install_language_servers
   fi
 
   # Check for AI CLI failures

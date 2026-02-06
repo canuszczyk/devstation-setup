@@ -87,101 +87,58 @@ install_npm() {
   fi
 }
 
-# --- AI CLIs ---
-install_ai_clis() {
-  echo "Installing AI CLIs..."
+# --- Language Servers for Claude Code ---
+install_language_servers() {
+  log_info "Installing language servers for Claude Code plugins..."
 
-  if [[ "${SKIP_AI_CLIS:-0}" == "1" ]]; then
-    log_info "Skipping AI CLI installation (SKIP_AI_CLIS=1)"
-    return 0
+  # Ensure dotnet tools and npm-global are in PATH for all processes (including Claude)
+  DOTNET_TOOLS="$HOME/.dotnet/tools"
+  NPM_GLOBAL="$HOME/.npm-global/bin"
+
+  # Update /etc/environment for all processes
+  if [[ -f /etc/environment ]] && ! grep -q "$NPM_GLOBAL" /etc/environment 2>/dev/null; then
+    log_info "Adding $NPM_GLOBAL to /etc/environment PATH"
+    sudo sed -i "s|PATH=\"\\(.*\\)\"|PATH=\"$NPM_GLOBAL:\\1\"|" /etc/environment 2>/dev/null || true
   fi
 
-  npm_prefix="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
-  bin_dir="$npm_prefix/bin"
-  mkdir -p "$npm_prefix" "$bin_dir" 2>/dev/null || true
-  npm config set prefix "$npm_prefix" >/dev/null 2>&1 || true
-
-  # Ensure npm global bin and ~/.local/bin are in PATH for this session
-  if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-    export PATH="$bin_dir:$PATH"
-  fi
-  if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    export PATH="$HOME/.local/bin:$PATH"
+  # Also add to .bashrc for interactive shells
+  if [[ -f "$HOME/.bashrc" ]] && ! grep -q '\.dotnet/tools' "$HOME/.bashrc" 2>/dev/null; then
+    log_info "Adding ~/.dotnet/tools to .bashrc"
+    echo 'export PATH="$HOME/.dotnet/tools:$PATH"' >> "$HOME/.bashrc"
   fi
 
-  # Persist PATH additions to .bashrc for interactive shells
-  BASHRC="$HOME/.bashrc"
-  if [[ -f "$BASHRC" ]]; then
-    if ! grep -q '\.local/bin' "$BASHRC" 2>/dev/null; then
-      log_info "Adding ~/.local/bin to .bashrc"
-      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASHRC"
-    fi
-    if ! grep -q '\.npm-global/bin' "$BASHRC" 2>/dev/null; then
-      log_info "Adding ~/.npm-global/bin to .bashrc"
-      echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$BASHRC"
-    fi
+  # Set PATH for current session
+  if [[ ":$PATH:" != *":$DOTNET_TOOLS:"* ]]; then
+    export PATH="$DOTNET_TOOLS:$PATH"
+  fi
+  if [[ ":$PATH:" != *":$NPM_GLOBAL:"* ]]; then
+    export PATH="$NPM_GLOBAL:$PATH"
   fi
 
-  log_info "PATH for AI CLI installs: $PATH"
-
-  # Claude CLI via npm
-  if ! command -v claude >/dev/null 2>&1; then
-    log_info "Installing Claude CLI via npm..."
-    if timeout 120 npm install -g @anthropic-ai/claude-code 2>&1; then
-      log_info "Claude CLI installed: $(command -v claude || echo 'not in PATH yet')"
+  # C# Language Server (requires .NET 8.0 runtime - already in base image)
+  if ! command -v csharp-ls >/dev/null 2>&1; then
+    log_info "Installing csharp-ls..."
+    if dotnet tool install --global csharp-ls 2>&1; then
+      log_info "csharp-ls installed"
     else
-      log_err "FAILED: Claude CLI installation"
-      FAILED_STEPS+=("claude-cli")
+      log_err "FAILED: csharp-ls installation"
+      FAILED_STEPS+=("csharp-ls")
     fi
   else
-    log_info "Claude CLI already installed."
+    log_info "csharp-ls already installed."
   fi
 
-  # Gemini CLI via npm (timeout 600s - large package with 500+ deps, slow on constrained CPUs)
-  log_info "Installing Gemini CLI (this may take several minutes)…"
-  if ! timeout 600 npm install -g @google/gemini-cli 2>&1; then
-    log_err "FAILED: Gemini CLI installation (npm install failed)"
-    FAILED_STEPS+=("gemini-cli")
-  elif ! command -v gemini >/dev/null 2>&1; then
-    log_err "FAILED: Gemini CLI installation (binary not found after install)"
-    log_err "  npm prefix: $(npm config get prefix)"
-    log_err "  PATH: $PATH"
-    FAILED_STEPS+=("gemini-cli")
-  else
-    log_info "Gemini CLI installed: $(command -v gemini)"
-  fi
-
-  # Codexaw (forked) - install first, then rename binary (timeout 120s)
-  log_info "Installing Codexaw CLI…"
-  if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
-    if [ -x "$bin_dir/codex" ]; then
-      mv "$bin_dir/codex" "$bin_dir/codexaw" >/dev/null 2>&1 || true
+  # TypeScript Language Server (dotnet template has Node.js for frontend)
+  if ! command -v typescript-language-server >/dev/null 2>&1; then
+    log_info "Installing typescript-language-server..."
+    if npm install -g typescript-language-server typescript 2>&1; then
+      log_info "typescript-language-server installed"
+    else
+      log_err "FAILED: typescript-language-server installation"
+      FAILED_STEPS+=("typescript-language-server")
     fi
   else
-    log_err "FAILED: Codexaw CLI installation"
-    FAILED_STEPS+=("codexaw-cli")
-  fi
-
-  # Official Codex (upstream) (timeout 120s)
-  log_info "Installing Codex CLI…"
-  if ! timeout 120 npm install -g @openai/codex; then
-    log_err "FAILED: Codex CLI installation"
-    FAILED_STEPS+=("codex-cli")
-  fi
-
-  # Verify AI CLI binaries are available
-  log_info "Verifying AI CLI installations…"
-  if ! command -v claude >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: claude not found in PATH"
-    FAILED_STEPS+=("claude-verify")
-  fi
-  if ! command -v gemini >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: gemini not found in PATH"
-    FAILED_STEPS+=("gemini-verify")
-  fi
-  if ! command -v codex >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: codex not found in PATH"
-    FAILED_STEPS+=("codex-verify")
+    log_info "typescript-language-server already installed."
   fi
 }
 
@@ -192,13 +149,13 @@ main() {
   if [[ "$QUICK_MODE" == "0" ]]; then
     restore_dotnet
     install_npm
-    install_ai_clis
+    install_language_servers
   fi
 
-  # Check for AI CLI failures and exit with error if any failed (unless skipped or quick mode)
-  if [[ "$QUICK_MODE" != "1" ]] && [[ "${SKIP_AI_CLIS:-0}" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
+  # Check for failures and exit with error if any failed
+  if [[ "$QUICK_MODE" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
     log_err "=========================================="
-    log_err "POST-CREATE FAILED: AI CLI installation errors"
+    log_err "POST-CREATE FAILED: installation errors"
     log_err "Failed steps: ${FAILED_STEPS[*]}"
     log_err "=========================================="
     exit 1
