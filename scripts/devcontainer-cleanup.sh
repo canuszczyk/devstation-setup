@@ -113,6 +113,12 @@ if [[ "$CLEAN_VOLUMES" == "1" ]]; then
   echo
 fi
 
+# Prune build cache (always safe — just means next build is slower)
+echo "Pruning Docker build cache..."
+pruned_build=$(docker builder prune -af 2>/dev/null | grep "Total reclaimed space" || echo "  Nothing to prune")
+echo "  $pruned_build"
+echo
+
 # Summary
 echo "=== Cleanup Complete ==="
 echo

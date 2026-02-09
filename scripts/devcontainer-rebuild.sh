@@ -355,7 +355,12 @@ main() {
       repo_names+=("$name")
 
       # Launch build in background subshell
+      # Each build gets its own TMPDIR to avoid devcontainer CLI race conditions
+      # (parallel builds share /tmp/devcontainercli-vscode/ and race on updateUID.Dockerfile)
       (
+        per_build_tmp="/tmp/devcontainer-build-${name}"
+        mkdir -p "$per_build_tmp"
+        export TMPDIR="$per_build_tmp"
         export SKIP_AI_CLIS="$SKIP_AI_CLIS"
         export SKIP_PLAYWRIGHT="$SKIP_PLAYWRIGHT"
         export BUILD_VERIFY_RESULT=""
@@ -375,7 +380,7 @@ main() {
 
     # Print initial status table - one line per repo
     for name in "${repo_names[@]}"; do
-      printf "  %-30s %-52s %s\n" "$name" "starting..." "0s"
+      printf "  %-38s %-44s %s\n" "$name" "starting..." "0s"
     done
 
     # Poll loop: update each line in-place using ANSI cursor movement
@@ -396,9 +401,9 @@ main() {
           local lines_up=$(( total - i ))
           printf "\033[%dA\r" "$lines_up"
           if [[ "$status" == "ok" ]]; then
-            printf "  %-30s %-52s %s\033[K\n" "$name" "successful" "$(format_duration "$dur")"
+            printf "  %-38s %-44s %s\033[K\n" "$name" "successful" "$(format_duration "$dur")"
           else
-            printf "  %-30s %-52s %s\033[K\n" "$name" "FAILED" "$(format_duration "$dur")"
+            printf "  %-38s %-44s %s\033[K\n" "$name" "FAILED" "$(format_duration "$dur")"
             failed=$((failed + 1))
           fi
           # Move cursor back down to bottom
@@ -431,7 +436,7 @@ main() {
             elif grep -q "postCreateCommand\|Post-Create" "$logfile" 2>/dev/null; then
               # Try to get a specific post-create step
               local pc_line
-              pc_line="$(grep -E '(Installing|Restoring|Setting up|Starting|Fixing|Waiting)' "$logfile" 2>/dev/null | tail -1 | sed 's/^\[.*\] //' | cut -c1-48)" || true
+              pc_line="$(grep -E '(Installing|Restoring|Setting up|Starting|Fixing|Waiting)' "$logfile" 2>/dev/null | tail -1 | sed 's/^\[.*\] //' | cut -c1-42)" || true
               if [[ -n "$pc_line" ]]; then
                 phase="$pc_line"
               else
@@ -456,7 +461,7 @@ main() {
           fi
           local lines_up=$(( total - i ))
           printf "\033[%dA\r" "$lines_up"
-          printf "  %-30s %-52s %s\033[K\n" "$name" "$phase" "$(format_duration "$elapsed")"
+          printf "  %-38s %-44s %s\033[K\n" "$name" "$phase" "$(format_duration "$elapsed")"
           if (( lines_up > 1 )); then
             printf "\033[%dB" $(( lines_up - 1 ))
           fi
@@ -467,6 +472,11 @@ main() {
 
     # Wait for all background processes to fully exit (|| true to avoid set -e)
     wait 2>/dev/null || true
+
+    # Clean up per-build temp directories
+    for name in "${repo_names[@]}"; do
+      rm -rf "/tmp/devcontainer-build-${name}" 2>/dev/null || true
+    done
 
     echo ""
     echo "=== Build Summary ==="

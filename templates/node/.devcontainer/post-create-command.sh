@@ -2,189 +2,145 @@
 set -euo pipefail
 
 # Post-create command for Node.js devcontainer
-# Usage: ./post-create-command.sh [--quick]
+# Philosophy: Rebuilds must be FAST (seconds). No project-level work.
+# Workspace is bind-mounted from host — node_modules persists.
+# Base image (devstation-base:latest) has all tools pre-installed.
 
-QUICK_MODE=0
-if [[ "${1:-}" == "--quick" ]]; then
-  QUICK_MODE=1
+log() { printf "\n\033[1;36m[setup]\033[0m %s\n" "$*"; }
+
+SUDO_BIN=""
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  SUDO_BIN="sudo"
 fi
 
-# Track failed steps for final exit code determination
-declare -a FAILED_STEPS=()
-
-log_err() { printf "\033[1;31m[err]\033[0m %s\n" "$*"; }
-log_info() { printf "\033[0;36m[info]\033[0m %s\n" "$*"; }
-
-echo "=== Post-Create Command (quick=$QUICK_MODE) ==="
-
-# --- Fix Volume Permissions ---
-fix_permissions() {
-  log_info "Fixing volume permissions..."
-  # Fix Docker volumes
-  if [[ -d "$HOME/.npm" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm" 2>/dev/null || true
+# --- System tuning (best-effort) ---
+raise_inotify_limits() {
+  if [[ -n "$SUDO_BIN" ]] \
+     && [ -w /proc/sys/fs/inotify/max_user_watches ] \
+     && [ -w /proc/sys/fs/inotify/max_user_instances ] \
+     && [ -w /proc/sys/fs/inotify/max_queued_events ]; then
+    $SUDO_BIN sysctl -w fs.inotify.max_user_watches=1048576  >/dev/null 2>&1 || true
+    $SUDO_BIN sysctl -w fs.inotify.max_user_instances=2048   >/dev/null 2>&1 || true
+    $SUDO_BIN sysctl -w fs.inotify.max_queued_events=32768   >/dev/null 2>&1 || true
   fi
-  if [[ -d "$HOME/.npm-global" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm-global" 2>/dev/null || true
-  fi
-  # NOTE: Do NOT chown ~/.claude or ~/.codex - they are bind mounts from host
-  # Changing their ownership would lock out the host user
-  # Create ~/.local/bin for Claude CLI
-  mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+}
 
-  # Create symlink for host username so Claude plugin paths work
-  # (plugins store paths like /home/hostuser/.claude/... which need to resolve in container)
-  if [[ -d "$HOME/.claude/plugins" ]]; then
-    HOST_USER=$(stat -c '%U' "$HOME/.claude" 2>/dev/null || true)
-    if [[ -n "$HOST_USER" && "$HOST_USER" != "$(whoami)" && ! -e "/home/$HOST_USER" ]]; then
-      sudo ln -sf "$HOME" "/home/$HOST_USER" 2>/dev/null || true
-      log_info "Created symlink /home/$HOST_USER -> $HOME for plugin paths"
+prepare_runtime_dirs() {
+  if [[ -n "$SUDO_BIN" ]]; then
+    $SUDO_BIN chmod 1777 /tmp || true
+    local ruid; ruid="$(id -u)"
+    $SUDO_BIN mkdir -p "/run/user/${ruid}" || true
+    $SUDO_BIN chown "${ruid}:$(id -g)" "/run/user/${ruid}" || true
+  fi
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  mkdir -p "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+  chmod 700 "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+}
+
+# --- Fix cache directory ownership (top-level only, never recursive) ---
+fix_cache_ownership() {
+  if [[ -n "$SUDO_BIN" ]]; then
+    local myuid; myuid="$(id -u):$(id -g)"
+    for p in /home/vscode/.npm /home/vscode/.npm-global /home/vscode/.cache; do
+      if [ -d "$p" ] && [ "$(stat -c '%u:%g' "$p" 2>/dev/null)" != "$myuid" ]; then
+        $SUDO_BIN chown "$myuid" "$p" 2>/dev/null || true
+      fi
+    done
+  fi
+  mkdir -p "$HOME/.config/gitui" 2>/dev/null || true
+  if [ "$(stat -c '%u:%g' "$HOME/.config" 2>/dev/null)" != "$(id -u):$(id -g)" ]; then
+    $SUDO_BIN chown "$(id -u):$(id -g)" "$HOME/.config" 2>/dev/null || true
+  fi
+}
+
+# --- GitHub CLI auth bootstrap ---
+bootstrap_gh_cli() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    export GH_TOKEN="${GH_TOKEN:-$GITHUB_TOKEN}"
+    if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+      printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token >/dev/null 2>&1 || true
     fi
   fi
 }
 
-fix_permissions
-
-# --- npm Install ---
-install_npm() {
-  if [[ -f "package.json" ]]; then
-    log_info "Installing npm packages..."
-    npm install || true
-  fi
-}
-
-# --- AI CLIs ---
+# --- AI CLIs (skip if already installed) ---
 install_ai_clis() {
-  echo "Installing AI CLIs..."
-
   if [[ "${SKIP_AI_CLIS:-0}" == "1" ]]; then
-    log_info "Skipping AI CLI installation (SKIP_AI_CLIS=1)"
+    log "Skipping AI CLI installation (SKIP_AI_CLIS=1)"
     return 0
   fi
 
-  npm_prefix="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}"
-  bin_dir="$npm_prefix/bin"
-  mkdir -p "$npm_prefix" "$bin_dir" 2>/dev/null || true
-  npm config set prefix "$npm_prefix" >/dev/null 2>&1 || true
+  log "Ensuring AI CLIs… Set SKIP_AI_CLIS=1 to skip"
 
-  # Ensure npm global bin and ~/.local/bin are in PATH for this session
-  if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-    export PATH="$bin_dir:$PATH"
-  fi
-  if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
-
-  # Persist PATH additions to .bashrc for interactive shells
-  BASHRC="$HOME/.bashrc"
-  if [[ -f "$BASHRC" ]]; then
-    if ! grep -q '\.local/bin' "$BASHRC" 2>/dev/null; then
-      log_info "Adding ~/.local/bin to .bashrc"
-      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASHRC"
-    fi
-    if ! grep -q '\.npm-global/bin' "$BASHRC" 2>/dev/null; then
-      log_info "Adding ~/.npm-global/bin to .bashrc"
-      echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "$BASHRC"
-    fi
-  fi
-
-  log_info "PATH for AI CLI installs: $PATH"
-
-  # Claude CLI via npm
   if ! command -v claude >/dev/null 2>&1; then
-    log_info "Installing Claude CLI via npm..."
-    if timeout 120 npm install -g @anthropic-ai/claude-code 2>&1; then
-      log_info "Claude CLI installed: $(command -v claude || echo 'not in PATH yet')"
+    log "Installing Claude CLI…"
+    timeout 120 npm install -g @anthropic-ai/claude-code 2>&1 || log "Warning: Claude CLI install failed (non-fatal)."
+  fi
+
+  if ! command -v codexaw >/dev/null 2>&1; then
+    log "Installing Codexaw CLI…"
+    local bin_dir="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}/bin"
+    if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
+      [ -x "$bin_dir/codex" ] && mv "$bin_dir/codex" "$bin_dir/codexaw" 2>/dev/null || true
     else
-      log_err "FAILED: Claude CLI installation"
-      FAILED_STEPS+=("claude-cli")
+      log "Warning: Codexaw install failed (non-fatal)."
     fi
-  else
-    log_info "Claude CLI already installed."
   fi
 
-  # Gemini CLI via npm (timeout 600s - large package)
-  log_info "Installing Gemini CLI (this may take several minutes)..."
-  if ! timeout 600 npm install -g @google/gemini-cli 2>&1; then
-    log_err "FAILED: Gemini CLI installation (npm install failed)"
-    FAILED_STEPS+=("gemini-cli")
-  elif ! command -v gemini >/dev/null 2>&1; then
-    log_err "FAILED: Gemini CLI installation (binary not found after install)"
-    FAILED_STEPS+=("gemini-cli")
-  else
-    log_info "Gemini CLI installed: $(command -v gemini)"
-  fi
-
-  # Codexaw (forked)
-  log_info "Installing Codexaw CLI..."
-  if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
-    if [ -x "$bin_dir/codex" ]; then
-      mv "$bin_dir/codex" "$bin_dir/codexaw" >/dev/null 2>&1 || true
-    fi
-  else
-    log_err "FAILED: Codexaw CLI installation"
-    FAILED_STEPS+=("codexaw-cli")
-  fi
-
-  # Official Codex (upstream)
-  log_info "Installing Codex CLI..."
-  if ! timeout 120 npm install -g @openai/codex; then
-    log_err "FAILED: Codex CLI installation"
-    FAILED_STEPS+=("codex-cli")
-  fi
-
-  # Verify AI CLI binaries are available
-  log_info "Verifying AI CLI installations..."
-  if ! command -v claude >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: claude not found in PATH"
-    FAILED_STEPS+=("claude-verify")
-  fi
-  if ! command -v gemini >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: gemini not found in PATH"
-    FAILED_STEPS+=("gemini-verify")
-  fi
   if ! command -v codex >/dev/null 2>&1; then
-    log_err "VERIFICATION FAILED: codex not found in PATH"
-    FAILED_STEPS+=("codex-verify")
+    log "Installing Codex CLI…"
+    timeout 120 npm install -g @openai/codex || log "Warning: Codex install failed (non-fatal)."
   fi
 }
 
-# --- Language Servers for Claude Code ---
-install_language_servers() {
-  log_info "Installing language servers for Claude Code plugins..."
+# --- AgentWatch daemon ---
+start_agentwatch() {
+  log "Starting AgentWatch daemon (if installed)..."
+  local aw_supervisor="/home/vscode/.agentwatch/bin/agentwatch-supervisor"
+  local aw_daemon="/home/vscode/.agentwatch/bin/agentwatch-daemon"
+  local aw_config="/home/vscode/.agentwatch/worker-config.json"
 
-  # TypeScript Language Server
-  if ! command -v typescript-language-server >/dev/null 2>&1; then
-    log_info "Installing typescript-language-server..."
-    if npm install -g typescript-language-server typescript 2>&1; then
-      log_info "typescript-language-server installed"
+  if [ -x "$aw_supervisor" ] && [ -f "$aw_config" ]; then
+    if ! pgrep -f "agentwatch-supervisor" > /dev/null 2>&1; then
+      nohup "$aw_supervisor" --config "$aw_config" > /dev/null 2>&1 &
+      sleep 1
+      pgrep -f "agentwatch-supervisor" > /dev/null 2>&1 && log "agentwatch-supervisor started" || log "Warning: agentwatch-supervisor failed to start"
     else
-      log_err "FAILED: typescript-language-server installation"
-      FAILED_STEPS+=("typescript-language-server")
+      log "agentwatch-supervisor already running"
+    fi
+  elif [ -x "$aw_daemon" ] && [ -f "$aw_config" ]; then
+    if ! pgrep -f "agentwatch-daemon" > /dev/null 2>&1; then
+      nohup "$aw_daemon" --config "$aw_config" > /dev/null 2>&1 &
+      sleep 1
+      pgrep -f "agentwatch-daemon" > /dev/null 2>&1 && log "agentwatch-daemon started" || log "Warning: agentwatch-daemon failed to start"
+    else
+      log "agentwatch-daemon already running"
     fi
   else
-    log_info "typescript-language-server already installed."
+    log "AgentWatch not installed (skipping)"
   fi
 }
 
 # --- Main ---
 main() {
-  if [[ "$QUICK_MODE" == "0" ]]; then
-    install_npm
-    install_ai_clis
-    install_language_servers
-  fi
+  case "${1:-}" in
+    --stop) exit 0 ;;
+    --quick)
+      install_ai_clis
+      start_agentwatch
+      log "Done (quick)."
+      exit 0
+      ;;
+  esac
 
-  # Check for AI CLI failures
-  if [[ "$QUICK_MODE" != "1" ]] && [[ "${SKIP_AI_CLIS:-0}" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
-    log_err "=========================================="
-    log_err "POST-CREATE FAILED: AI CLI installation errors"
-    log_err "Failed steps: ${FAILED_STEPS[*]}"
-    log_err "=========================================="
-    exit 1
-  fi
+  raise_inotify_limits
+  prepare_runtime_dirs
+  fix_cache_ownership
+  bootstrap_gh_cli
+  install_ai_clis
+  start_agentwatch
 
-  echo "=== Post-Create Complete ==="
+  log "Done."
 }
 
 main "$@"

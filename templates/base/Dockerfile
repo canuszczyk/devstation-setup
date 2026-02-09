@@ -240,7 +240,7 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 ENV NODE_PATH=/home/${USERNAME}/.npm-global/lib/node_modules
 
 # Unified PATH: bun, node, dotnet, go, cargo, user npm, dotnet tools, claude
-ENV PATH="/home/${USERNAME}/.local/bin:/home/${USERNAME}/.cargo/bin:${BUN_INSTALL}/bin:${NODE_HOME}/bin:${DOTNET_ROOT}:/usr/local/go/bin:/usr/local/bin:${PATH}:/home/${USERNAME}/.dotnet/tools:/home/${USERNAME}/.npm-global/bin:${CODEXAW_PREFIX}/bin:/home/${USERNAME}/.claude/local/bin"
+ENV PATH="/home/${USERNAME}/bin:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.cargo/bin:${BUN_INSTALL}/bin:${NODE_HOME}/bin:${DOTNET_ROOT}:/usr/local/go/bin:/usr/local/bin:${PATH}:/home/${USERNAME}/.dotnet/tools:/home/${USERNAME}/.npm-global/bin:${CODEXAW_PREFIX}/bin:/home/${USERNAME}/.claude/local/bin"
 
 # ---------------------------------------------------------------------------
 # [20] (as vscode) Rust toolchain + clippy + rustfmt + aarch64 target (codex)

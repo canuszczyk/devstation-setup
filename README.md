@@ -61,7 +61,10 @@ After installation, you'll have these scripts in your home directory:
 | `~/devcontainer-open.sh [path]` | Start existing container(s) |
 | `~/devcontainer-stop-all.sh` | Stop all running devcontainers |
 | `~/devcontainer-start-all.sh` | Start all devcontainers |
+| `~/devcontainer-start-all.sh --rebuild` | Rebuild all devcontainers |
+| `~/devcontainer-stop.sh [path]` | Stop a single container |
 | `~/devcontainer-cleanup.sh` | Clean up stopped containers/images |
+| `~/build-base-image.sh` | Build `devstation-base:latest` image |
 | `~/dexec [path]` | Shell into a container by repo path |
 
 See [scripts/README.md](scripts/README.md) for detailed usage.
@@ -133,6 +136,7 @@ devstation-setup/
 │   ├── devcontainer-start-all.sh
 │   ├── dexec
 │   └── README.md               # Script usage reference
+├── CLAUDE.md                    # Agent instructions (patterns, anti-patterns)
 ├── config/
 │   ├── bashrc-additions        # Custom .bashrc content
 │   └── ssh-config-template     # SSH config template
@@ -185,30 +189,86 @@ Claude Code credentials are shared across all containers by bind-mounting `~/.cl
 2. All containers automatically pick up credentials via the bind mount
 3. Settings, plugins, statusline, and MCP servers are shared across all containers
 
-### How It Works
-
-Each devcontainer template includes this mount in `runArgs`:
-```json
-"--mount", "type=bind,source=${localEnv:HOME}/.claude,target=/home/vscode/.claude",
-```
-
-And the `initializeCommand` ensures the directory exists on the host:
-```bash
-mkdir -p "$HOME/.claude"
-```
-
 ### Important
 
 - **Do NOT use named volumes** for `~/.claude/` — they diverge from the host and settings/statusline won't sync
 - **Do NOT set `ANTHROPIC_API_KEY`** in `.env` (even empty) — it triggers API billing mode instead of using your Max/Pro subscription
 - **Do NOT set `CLAUDE_CODE_OAUTH_TOKEN`** — same problem, triggers API billing mode
 
+## Base Image
+
+All repos use `FROM devstation-base:latest`, a kitchen-sink image containing:
+
+- .NET 9, 8, and 6 SDKs
+- Node.js 22 + npm
+- Python 3.12 + pip
+- Bun runtime
+- Go 1.23.5
+- Rust (rustup + cargo)
+- AI CLIs: claude, gemini, codex, codexaw
+- Playwright Chromium
+- Stripe CLI, AWS CLI, doctl
+- gitui, broot, Docker CLI
+
+Build it with: `~/build-base-image.sh` (supports `--no-cache`)
+
+## Post-Create Philosophy
+
+Container rebuilds are designed to be **fast (seconds, not minutes)**. Post-create scripts only handle container-level setup — never project-level work.
+
+All workspaces are **bind-mounted** from the host (`~/code/REPO` → `/home/vscode/REPO`). This means `node_modules/`, `bin/`, `obj/`, `.nuget/packages/`, `venv/`, and all project artifacts **persist across rebuilds**. Dependencies only need to be installed once (the first time, manually by the developer).
+
+**Do:**
+- System tuning (inotify limits, /tmp permissions, XDG_RUNTIME_DIR)
+- Start PostgreSQL (init cluster if needed, create roles/databases)
+- Fix top-level cache dir ownership with `stat` check — **never recursive `chown -R`**
+- Start AgentWatch daemon (if installed)
+- Install AI CLIs only if not already present (`command -v` guard)
+- Handle `--stop` (no-op exit) and `--quick` (minimal startup) flags
+
+**Don't:**
+- `dotnet restore` — obj/bin persist on host via bind mount
+- `npm install` / `npm ci` — node_modules persist on host
+- `pip install` — venv persists on host
+- `cargo install` — cargo binaries persist on host
+- `dotnet ef database update` — servers auto-apply migrations on startup
+- `dotnet tool install` — tools persist in ~/.dotnet/tools
+- Recursive `chown -R` on cache directories — these have tens of thousands of files
+
+See `CLAUDE.md` for copy-paste-ready code patterns and anti-patterns.
+
+## Bind Mounts
+
+Every container bind-mounts these from the host for persistence:
+
+| Host Path | Container Path | Purpose |
+|-----------|---------------|---------|
+| `~/.claude/` | `/home/vscode/.claude/` | Claude Code auth, settings, plugins |
+| `~/.codex/` | `/home/vscode/.codex/` | Codex CLI config |
+| `~/.config/gh/` | `/home/vscode/.config/gh/` | GitHub CLI auth (shared via `gh auth setup-git`) |
+| `~/bin/` | `/home/vscode/bin/` | Custom scripts/shortcuts (first in PATH) |
+| `~/code/REPO/` | `/home/vscode/REPO/` | Workspace (auto via workspaceMount) |
+
+These must be declared in every `devcontainer.json` under `runArgs`, and the directories must be pre-created in `initializeCommand`:
+
+```json
+"initializeCommand": "bash -lc '...mkdir -p \"$HOME/.claude\" \"$HOME/.codex\" \"$HOME/.config/gh\" \"$HOME/bin\"...'"
+```
+
+### Repo Dockerfiles
+
+All repo Dockerfiles should be a single line:
+```dockerfile
+FROM devstation-base:latest
+```
+The base image contains all tools. Only add repo-specific system packages if absolutely required.
+
 ## Devcontainer Templates
 
 The `templates/` directory contains starter devcontainer configurations:
 
-- **dotnet/** - .NET 9 with PostgreSQL, EF Core, AI CLIs
-- **node/** - Node.js 20 with npm, Playwright, AI CLIs
+- **dotnet/** - .NET with PostgreSQL, EF Core, AI CLIs
+- **node/** - Node.js with npm, AI CLIs
 - **python/** - Python 3.12 with pip, AI CLIs
 
 Copy a template to your project:

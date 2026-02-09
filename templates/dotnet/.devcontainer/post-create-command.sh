@@ -2,166 +2,173 @@
 set -euo pipefail
 
 # Post-create command for .NET devcontainer
-# Usage: ./post-create-command.sh [--quick]
+# Philosophy: Rebuilds must be FAST (seconds). No project-level work.
+# Workspace is bind-mounted from host — node_modules, bin, obj all persist.
+# Base image (devstation-base:latest) has all tools pre-installed.
 
-QUICK_MODE=0
-if [[ "${1:-}" == "--quick" ]]; then
-  QUICK_MODE=1
+log() { printf "\n\033[1;36m[setup]\033[0m %s\n" "$*"; }
+
+SUDO_BIN=""
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  SUDO_BIN="sudo"
 fi
 
-# Track failed steps for final exit code determination
-declare -a FAILED_STEPS=()
-
-log_err() { printf "\033[1;31m[err]\033[0m %s\n" "$*"; }
-log_info() { printf "\033[0;36m[info]\033[0m %s\n" "$*"; }
-
-echo "=== Post-Create Command (quick=$QUICK_MODE) ==="
-
-# --- Fix Volume Permissions ---
-# Docker volumes may be created with different UID ownership
-# Fix npm cache and nuget cache permissions if they exist
-fix_permissions() {
-  log_info "Fixing volume permissions..."
-  # Fix Docker volumes
-  if [[ -d "$HOME/.npm" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm" 2>/dev/null || true
+# --- System tuning (best-effort) ---
+raise_inotify_limits() {
+  if [[ -n "$SUDO_BIN" ]] \
+     && [ -w /proc/sys/fs/inotify/max_user_watches ] \
+     && [ -w /proc/sys/fs/inotify/max_user_instances ] \
+     && [ -w /proc/sys/fs/inotify/max_queued_events ]; then
+    $SUDO_BIN sysctl -w fs.inotify.max_user_watches=1048576  >/dev/null 2>&1 || true
+    $SUDO_BIN sysctl -w fs.inotify.max_user_instances=2048   >/dev/null 2>&1 || true
+    $SUDO_BIN sysctl -w fs.inotify.max_queued_events=32768   >/dev/null 2>&1 || true
   fi
-  if [[ -d "$HOME/.nuget" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.nuget" 2>/dev/null || true
-  fi
-  if [[ -d "$HOME/.npm-global" ]]; then
-    sudo chown -R "$(id -u):$(id -g)" "$HOME/.npm-global" 2>/dev/null || true
-  fi
-  # NOTE: Do NOT chown ~/.claude or ~/.codex - they are bind mounts from host
-  # Changing their ownership would lock out the host user
-  # Create ~/.local/bin for Claude CLI
-  mkdir -p "$HOME/.local/bin" 2>/dev/null || true
 }
 
-fix_permissions
+prepare_runtime_dirs() {
+  if [[ -n "$SUDO_BIN" ]]; then
+    $SUDO_BIN chmod 1777 /tmp || true
+    local ruid; ruid="$(id -u)"
+    $SUDO_BIN mkdir -p "/run/user/${ruid}" || true
+    $SUDO_BIN chown "${ruid}:$(id -g)" "/run/user/${ruid}" || true
+  fi
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+  mkdir -p "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+  chmod 700 "${XDG_RUNTIME_DIR}" 2>/dev/null || true
+}
 
-# --- PostgreSQL Setup ---
+# --- Fix cache directory ownership (top-level only, never recursive) ---
+fix_cache_ownership() {
+  if [[ -n "$SUDO_BIN" ]]; then
+    local myuid; myuid="$(id -u):$(id -g)"
+    for p in /home/vscode/.nuget /home/vscode/.npm /home/vscode/.npm-global /home/vscode/.cache; do
+      if [ -d "$p" ] && [ "$(stat -c '%u:%g' "$p" 2>/dev/null)" != "$myuid" ]; then
+        $SUDO_BIN chown "$myuid" "$p" 2>/dev/null || true
+      fi
+    done
+  fi
+  mkdir -p "$HOME/.config/gitui" 2>/dev/null || true
+  if [ "$(stat -c '%u:%g' "$HOME/.config" 2>/dev/null)" != "$(id -u):$(id -g)" ]; then
+    $SUDO_BIN chown "$(id -u):$(id -g)" "$HOME/.config" 2>/dev/null || true
+  fi
+}
+
+# --- GitHub CLI auth bootstrap ---
+bootstrap_gh_cli() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    export GH_TOKEN="${GH_TOKEN:-$GITHUB_TOKEN}"
+    if command -v gh >/dev/null 2>&1 && ! gh auth status >/dev/null 2>&1; then
+      printf '%s' "$GITHUB_TOKEN" | gh auth login --with-token >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+# --- PostgreSQL setup ---
 setup_postgres() {
-  echo "Setting up PostgreSQL..."
+  if ! command -v pg_ctl >/dev/null 2>&1; then
+    log "PostgreSQL not available; skipping."
+    return
+  fi
 
   local pgdata="${PGDATA:-/workspaces/$(basename "$PWD")/.devcontainer/pgdata}"
 
-  # Initialize if needed
-  if [[ ! -d "$pgdata" || ! -f "$pgdata/PG_VERSION" ]]; then
-    echo "Initializing PostgreSQL data directory..."
+  if [[ ! -f "$pgdata/PG_VERSION" ]]; then
+    log "Initializing PostgreSQL..."
     mkdir -p "$pgdata"
     initdb -D "$pgdata" --auth=trust --encoding=UTF8
   fi
 
-  # Start PostgreSQL if not running
   if ! pg_isready -q 2>/dev/null; then
-    echo "Starting PostgreSQL..."
+    log "Starting PostgreSQL..."
     pg_ctl -D "$pgdata" -l "$pgdata/logfile" start -w -t 30 || true
   fi
 
-  # Wait for PostgreSQL to be ready
-  for i in {1..30}; do
-    if pg_isready -q 2>/dev/null; then
-      echo "PostgreSQL is ready"
-      return 0
-    fi
+  for i in {1..15}; do
+    pg_isready -q 2>/dev/null && break
     sleep 1
   done
-
-  echo "Warning: PostgreSQL may not be ready"
 }
 
-# --- .NET Restore ---
-restore_dotnet() {
-  if [[ -f "*.sln" ]] || ls *.csproj 1>/dev/null 2>&1; then
-    echo "Restoring .NET packages..."
-    dotnet restore || true
-  fi
-}
-
-# --- npm Install ---
-install_npm() {
-  if [[ -f "package.json" ]]; then
-    echo "Installing npm packages..."
-    npm install || true
-  fi
-}
-
-# --- Language Servers for Claude Code ---
-install_language_servers() {
-  log_info "Installing language servers for Claude Code plugins..."
-
-  # Ensure dotnet tools and npm-global are in PATH for all processes (including Claude)
-  DOTNET_TOOLS="$HOME/.dotnet/tools"
-  NPM_GLOBAL="$HOME/.npm-global/bin"
-
-  # Update /etc/environment for all processes
-  if [[ -f /etc/environment ]] && ! grep -q "$NPM_GLOBAL" /etc/environment 2>/dev/null; then
-    log_info "Adding $NPM_GLOBAL to /etc/environment PATH"
-    sudo sed -i "s|PATH=\"\\(.*\\)\"|PATH=\"$NPM_GLOBAL:\\1\"|" /etc/environment 2>/dev/null || true
+# --- AI CLIs (skip if already installed) ---
+install_ai_clis() {
+  if [[ "${SKIP_AI_CLIS:-0}" == "1" ]]; then
+    log "Skipping AI CLI installation (SKIP_AI_CLIS=1)"
+    return 0
   fi
 
-  # Also add to .bashrc for interactive shells
-  if [[ -f "$HOME/.bashrc" ]] && ! grep -q '\.dotnet/tools' "$HOME/.bashrc" 2>/dev/null; then
-    log_info "Adding ~/.dotnet/tools to .bashrc"
-    echo 'export PATH="$HOME/.dotnet/tools:$PATH"' >> "$HOME/.bashrc"
+  log "Ensuring AI CLIs… Set SKIP_AI_CLIS=1 to skip"
+
+  if ! command -v claude >/dev/null 2>&1; then
+    log "Installing Claude CLI…"
+    timeout 120 npm install -g @anthropic-ai/claude-code 2>&1 || log "Warning: Claude CLI install failed (non-fatal)."
   fi
 
-  # Set PATH for current session
-  if [[ ":$PATH:" != *":$DOTNET_TOOLS:"* ]]; then
-    export PATH="$DOTNET_TOOLS:$PATH"
-  fi
-  if [[ ":$PATH:" != *":$NPM_GLOBAL:"* ]]; then
-    export PATH="$NPM_GLOBAL:$PATH"
-  fi
-
-  # C# Language Server (requires .NET 8.0 runtime - already in base image)
-  if ! command -v csharp-ls >/dev/null 2>&1; then
-    log_info "Installing csharp-ls..."
-    if dotnet tool install --global csharp-ls 2>&1; then
-      log_info "csharp-ls installed"
+  if ! command -v codexaw >/dev/null 2>&1; then
+    log "Installing Codexaw CLI…"
+    local bin_dir="${NPM_CONFIG_PREFIX:-$HOME/.npm-global}/bin"
+    if timeout 120 npm install -g https://github.com/digitalsoftwaresolutionsrepos/codex/releases/latest/download/codexaw.tgz; then
+      [ -x "$bin_dir/codex" ] && mv "$bin_dir/codex" "$bin_dir/codexaw" 2>/dev/null || true
     else
-      log_err "FAILED: csharp-ls installation"
-      FAILED_STEPS+=("csharp-ls")
+      log "Warning: Codexaw install failed (non-fatal)."
+    fi
+  fi
+
+  if ! command -v codex >/dev/null 2>&1; then
+    log "Installing Codex CLI…"
+    timeout 120 npm install -g @openai/codex || log "Warning: Codex install failed (non-fatal)."
+  fi
+}
+
+# --- AgentWatch daemon ---
+start_agentwatch() {
+  log "Starting AgentWatch daemon (if installed)..."
+  local aw_supervisor="/home/vscode/.agentwatch/bin/agentwatch-supervisor"
+  local aw_daemon="/home/vscode/.agentwatch/bin/agentwatch-daemon"
+  local aw_config="/home/vscode/.agentwatch/worker-config.json"
+
+  if [ -x "$aw_supervisor" ] && [ -f "$aw_config" ]; then
+    if ! pgrep -f "agentwatch-supervisor" > /dev/null 2>&1; then
+      nohup "$aw_supervisor" --config "$aw_config" > /dev/null 2>&1 &
+      sleep 1
+      pgrep -f "agentwatch-supervisor" > /dev/null 2>&1 && log "agentwatch-supervisor started" || log "Warning: agentwatch-supervisor failed to start"
+    else
+      log "agentwatch-supervisor already running"
+    fi
+  elif [ -x "$aw_daemon" ] && [ -f "$aw_config" ]; then
+    if ! pgrep -f "agentwatch-daemon" > /dev/null 2>&1; then
+      nohup "$aw_daemon" --config "$aw_config" > /dev/null 2>&1 &
+      sleep 1
+      pgrep -f "agentwatch-daemon" > /dev/null 2>&1 && log "agentwatch-daemon started" || log "Warning: agentwatch-daemon failed to start"
+    else
+      log "agentwatch-daemon already running"
     fi
   else
-    log_info "csharp-ls already installed."
-  fi
-
-  # TypeScript Language Server (dotnet template has Node.js for frontend)
-  if ! command -v typescript-language-server >/dev/null 2>&1; then
-    log_info "Installing typescript-language-server..."
-    if npm install -g typescript-language-server typescript 2>&1; then
-      log_info "typescript-language-server installed"
-    else
-      log_err "FAILED: typescript-language-server installation"
-      FAILED_STEPS+=("typescript-language-server")
-    fi
-  else
-    log_info "typescript-language-server already installed."
+    log "AgentWatch not installed (skipping)"
   fi
 }
 
 # --- Main ---
 main() {
+  case "${1:-}" in
+    --stop) exit 0 ;;
+    --quick)
+      setup_postgres
+      install_ai_clis
+      start_agentwatch
+      log "Done (quick)."
+      exit 0
+      ;;
+  esac
+
+  raise_inotify_limits
+  prepare_runtime_dirs
+  fix_cache_ownership
+  bootstrap_gh_cli
   setup_postgres
+  install_ai_clis
+  start_agentwatch
 
-  if [[ "$QUICK_MODE" == "0" ]]; then
-    restore_dotnet
-    install_npm
-    install_language_servers
-  fi
-
-  # Check for failures and exit with error if any failed
-  if [[ "$QUICK_MODE" != "1" ]] && (( ${#FAILED_STEPS[@]} > 0 )); then
-    log_err "=========================================="
-    log_err "POST-CREATE FAILED: installation errors"
-    log_err "Failed steps: ${FAILED_STEPS[*]}"
-    log_err "=========================================="
-    exit 1
-  fi
-
-  echo "=== Post-Create Complete ==="
+  log "Done."
 }
 
 main "$@"
