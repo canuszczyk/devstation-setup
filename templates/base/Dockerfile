@@ -155,6 +155,18 @@ RUN _start=$SECONDS && echo "▶ [12/21] Installing doctl ${DOCTL_VERSION}…" &
     echo "✓ [12/21] done in $((SECONDS - _start))s"
 
 # ---------------------------------------------------------------------------
+# [12b] Terraform (DeploymentInfra, general IaC)
+# ---------------------------------------------------------------------------
+ARG TERRAFORM_VERSION=1.12.1
+RUN _start=$SECONDS && echo "▶ [12b] Installing Terraform ${TERRAFORM_VERSION}…" && \
+    curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" && \
+    unzip -q /tmp/terraform.zip -d /tmp && \
+    mv /tmp/terraform /usr/local/bin/terraform && \
+    chmod +x /usr/local/bin/terraform && \
+    rm -f /tmp/terraform.zip && \
+    echo "✓ [12b] done in $((SECONDS - _start))s"
+
+# ---------------------------------------------------------------------------
 # [13] SSH: GitHub host key
 # ---------------------------------------------------------------------------
 RUN _start=$SECONDS && echo "▶ [13/21] Adding GitHub SSH host key…" && \

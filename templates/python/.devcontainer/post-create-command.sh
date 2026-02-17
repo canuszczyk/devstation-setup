@@ -41,7 +41,7 @@ prepare_runtime_dirs() {
 fix_cache_ownership() {
   if [[ -n "$SUDO_BIN" ]]; then
     local myuid; myuid="$(id -u):$(id -g)"
-    for p in /home/vscode/.npm /home/vscode/.npm-global /home/vscode/.cache /home/vscode/.cache/pip; do
+    for p in /home/vscode/.npm /home/vscode/.npm-global /home/vscode/.cache /home/vscode/.cache/pip /home/vscode/.agentwatch /home/vscode/.agent-watch-hooks; do
       if [ -d "$p" ] && [ "$(stat -c '%u:%g' "$p" 2>/dev/null)" != "$myuid" ]; then
         $SUDO_BIN chown "$myuid" "$p" 2>/dev/null || true
       fi
