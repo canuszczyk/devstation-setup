@@ -46,8 +46,8 @@ DO NOT edit code in ~/code/* directly from the host - always enter the devcontai
 | `~/devcontainer-rebuild.sh ~/code/REPO --fast` | Skip AI CLIs and Playwright install |
 | `~/devcontainer-open.sh ~/code/REPO` | Start stopped container |
 | `~/devcontainer-stop.sh ~/code/REPO` | Stop a single container |
-| `~/devcontainer-start-all.sh` | Start all 5 repo containers |
-| `~/devcontainer-start-all.sh --rebuild` | Rebuild all 5 repo containers |
+| `~/devcontainer-start-all.sh` | Start all repo containers |
+| `~/devcontainer-start-all.sh --rebuild` | Rebuild all repo containers |
 | `~/devcontainer-stop-all.sh` | Stop all devcontainers |
 | `~/devcontainer-cleanup.sh` | Remove stopped containers, prune images |
 | `dexec ~/code/REPO` | Shell into running container |
@@ -78,7 +78,7 @@ Host: ~/code/my-repo/          Container: /workspaces/my-repo/
 
 ## Template Options
 
-All templates use `FROM devstation-base:latest`. NEVER add a custom base image — the base image already has everything. Template Dockerfiles should be one line only; add repo-specific system packages only if absolutely needed.
+All templates use `FROM devstation-base:latest`. NEVER add a custom base image — the base image already has everything. All templates run systemd as PID 1 with journald logging. Template Dockerfiles should be one line only; add repo-specific system packages only if absolutely needed.
 
 | Template | Features |
 |----------|----------|
@@ -152,7 +152,7 @@ All workspaces are **bind-mounted** from the host (`~/code/REPO` → `/workspace
 - Rebuilding a container just creates a fresh OS environment around the existing workspace
 
 ### Base Image (`devstation-base:latest`)
-All 5 repos use `FROM devstation-base:latest`. The base image contains ALL tools:
+All repos use `FROM devstation-base:latest`. The base image contains ALL tools:
 - .NET 9, 8, and 6 SDKs
 - Node.js 22 + npm
 - Python 3.12
@@ -180,7 +180,7 @@ When setting up a new repo's devcontainer, follow these exact patterns.
 ```dockerfile
 FROM devstation-base:latest
 ```
-The base image has everything. Repo Dockerfiles should only add repo-specific system packages if absolutely needed.
+**ALL repos MUST use `FROM devstation-base:latest`**. Never use a custom base image (e.g. `python:3.12-bookworm`) — it won't have systemd, journald, or the standard toolchain, and the container will exit immediately. Add repo-specific system packages in the Dockerfile only if absolutely needed. If the repo uses docker-in-docker, also add `RUN systemctl mask docker.service docker.socket` (see Troubleshooting).
 
 ### devcontainer.json — Required Sections
 
@@ -397,6 +397,31 @@ docker exec -it -u vscode -w "$ws_folder" "$cid" "$cmd"
 ```
 
 **IMPORTANT:** Editing the script files at `~/devstation-setup/scripts/dexec` or `~/.local/bin/dexec` will have NO effect — the `.bashrc` function is the one that must be fixed. After editing `.bashrc`, run `source ~/.bashrc` in all open terminals.
+
+### Docker-in-Docker + systemd: docker.service conflict
+
+If a container with docker-in-docker feature shows `systemctl is-system-running` as **degraded** with `docker.service` and `docker.socket` in failed state:
+
+**Root cause:** The docker-in-docker devcontainer feature installs a `docker.service` systemd unit. When systemd starts, it tries to launch this service, which conflicts with the feature's own dockerd process.
+
+**Fix:** Add to the repo's `.devcontainer/Dockerfile`:
+```dockerfile
+USER root
+RUN systemctl mask docker.service docker.socket
+USER vscode
+```
+
+This masks the conflicting units while the docker-in-docker feature continues to manage its own dockerd. Docker-in-docker still works normally.
+
+**Applies to:** Any repo with `ghcr.io/devcontainers/features/docker-in-docker:2` in its devcontainer.json features.
+
+### `--force` rebuild fails with "pulling devstation-base:latest"
+
+If `~/devcontainer-rebuild.sh ~/code/REPO --force` fails trying to pull the base image:
+
+**Root cause:** The `--force` flag passes `--pull` to `docker buildx`, which tries to pull from a registry. `devstation-base:latest` is a local-only image — it's not pushed to any registry.
+
+**Fix:** Use `~/devcontainer-rebuild.sh ~/code/REPO` without `--force`. If you need a full rebuild, manually remove the container/image first, then rebuild without `--force`.
 
 ### Docker-in-Docker fails on Debian trixie
 
